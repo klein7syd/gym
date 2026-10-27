@@ -1,7 +1,7 @@
 import UIKit
 import AVFoundation
 
-@main
+@UIApplicationMain
 final class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?

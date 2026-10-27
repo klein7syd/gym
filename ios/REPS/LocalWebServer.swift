@@ -117,8 +117,8 @@ final class LocalWebServer {
     }
 
     private func respond(_ conn: NWConnection, requestHead: String) {
-        let lines = requestHead.split(separator: "\r\n", omittingEmptySubsequences: true)
-        guard let first = lines.first else {
+        let lines = requestHead.components(separatedBy: "\r\n")
+        guard let first = lines.first(where: { !$0.isEmpty }) else {
             send(conn, status: "400 Bad Request", mime: "text/plain; charset=utf-8",
                  body: Data("bad request".utf8), headOnly: false)
             return

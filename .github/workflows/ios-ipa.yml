@@ -63,26 +63,26 @@ jobs:
         run: |
           set -euo pipefail
           cd ios
-          xcodebuild \
-            -project REPS.xcodeproj \
-            -scheme REPS \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            ENABLE_BITCODE=NO \
-            build
+          # 先按 scheme 编；scheme 万一没生成出来，就退回按 target 编
+          xcodebuild -project REPS.xcodeproj -scheme REPS -configuration Release \
+                     -sdk iphoneos -derivedDataPath build \
+                     CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGN_IDENTITY="" ENABLE_BITCODE=NO build \
+            || xcodebuild -project REPS.xcodeproj -target REPS -configuration Release \
+                          -sdk iphoneos \
+                          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+                          CODE_SIGN_IDENTITY="" ENABLE_BITCODE=NO build
 
       - name: 打包成 IPA
         run: |
           set -euo pipefail
-          APP="$(find ios/build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n1)"
+          APP="$(find ios/build -maxdepth 4 -type d -name 'REPS.app' | head -n1)"
           echo "APP = $APP"
           test -n "$APP"
           echo "--- bundle 内容 ---"
           ls -la "$APP" | head -30
+          echo "--- Web 资源 ---"
+          ls -R "$APP/Web" | head -30
           rm -rf out
           mkdir -p out/Payload
           cp -R "$APP" out/Payload/
