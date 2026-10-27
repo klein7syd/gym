@@ -1,0 +1,1240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="REPS">
+<meta name="theme-color" content="#0D0D14">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>REPS</title>
+<style>
+:root{
+  --bg:#0B0B0C; --card:#151518; --card2:#1C1C20;
+  --fg:#F2F0EA; --mut:#8A8A92; --dim:#5C5C64;
+  --acc:#D7FF3E; --warn:#FF6B4A; --line:rgba(255,255,255,.07);
+  --r:24px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:-apple-system,"SF Pro Display","Helvetica Neue","PingFang SC",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input{font:inherit;color:inherit}
+.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+
+.app{max-width:480px;margin:0 auto;padding:calc(env(safe-area-inset-top) + 14px) 18px 210px;}
+
+/* ---------- header ---------- */
+.head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:16px}
+.date{font-size:12px;color:var(--mut);letter-spacing:.14em;text-transform:uppercase;margin-bottom:6px}
+.title{font-size:30px;font-weight:800;letter-spacing:-.02em;line-height:1.05}
+.head-act{font-size:13px;color:var(--mut);border:1px solid var(--line);border-radius:999px;padding:8px 14px}
+.head-act:active{background:var(--card2)}
+
+/* ---------- cards ---------- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin-bottom:14px}
+.card-hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.lab{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.ex-name{font-size:24px;font-weight:750;letter-spacing:-.01em}
+.ex-last{font-size:13px;color:var(--mut);margin-top:8px;line-height:1.5}
+.link{font-size:13px;color:var(--acc)}
+.link:active{opacity:.6}
+
+/* ---------- steppers ---------- */
+.row{display:flex;gap:12px;margin-bottom:16px}
+.step{flex:1;background:var(--card2);border-radius:18px;padding:12px 8px;display:flex;align-items:center;justify-content:space-between}
+.sbtn{width:38px;height:38px;border-radius:12px;background:rgba(255,255,255,.06);display:grid;place-items:center;font-size:20px;font-weight:600;color:var(--fg)}
+.sbtn:active{background:rgba(255,255,255,.16);transform:scale(.94)}
+.sval{text-align:center;flex:1;font-size:22px;font-weight:750;letter-spacing:-.01em}
+.sval span{font-size:11px;color:var(--dim);display:block;font-weight:600;letter-spacing:.1em;margin-top:2px}
+
+/* ---------- big button ---------- */
+.big{width:100%;height:62px;border-radius:20px;background:var(--acc);color:#0B0B0C;font-size:17px;font-weight:800;letter-spacing:.01em;transition:transform .08s}
+.big:active{transform:scale(.985)}
+.big.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.big.dark{background:var(--card2);color:var(--fg)}
+
+/* ---------- set log ---------- */
+.sets{margin-top:18px;border-top:1px solid var(--line);padding-top:14px}
+.setrow{display:flex;align-items:center;gap:12px;padding:9px 0;font-size:15px}
+.setrow .i{width:22px;color:var(--dim);font-size:12px}
+.setrow .v{font-weight:650}
+.setrow .t{margin-left:auto;color:var(--dim);font-size:12px}
+.tick{color:var(--acc)}
+
+/* ---------- rest timer ---------- */
+.rest{display:grid;place-items:center;padding:8px 0 4px}
+.ring{position:relative;width:196px;height:196px}
+.ring svg{transform:rotate(-90deg)}
+.ring .inner{position:absolute;inset:0;display:grid;place-items:center;text-align:center}
+.tleft{font-size:46px;font-weight:800;letter-spacing:-.03em}
+.tsub{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--mut);margin-top:4px}
+.chips{display:flex;gap:8px;justify-content:center;margin-top:6px;flex-wrap:wrap}
+.chip{padding:9px 16px;border-radius:999px;border:1px solid var(--line);font-size:13px;color:var(--mut);font-weight:600}
+.chip.on{background:var(--acc);color:#0B0B0C;border-color:var(--acc)}
+.chip:active{transform:scale(.95)}
+
+/* ---------- stats ---------- */
+.excard{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px 18px;margin-bottom:10px}
+.excard .top{display:flex;align-items:baseline;justify-content:space-between}
+.excard .nm{font-size:17px;font-weight:700}
+.excard .val{font-size:15px;font-weight:700;color:var(--acc)}
+.excard .delta{font-size:12px;color:var(--mut);margin-left:6px}
+.spark{margin:12px 0 8px}
+.adv{font-size:13px;color:var(--mut);line-height:1.55;border-left:2px solid var(--acc);padding-left:10px}
+.empty{text-align:center;color:var(--dim);font-size:14px;padding:40px 0}
+
+/* ---------- lib ---------- */
+.grp{margin-bottom:18px}
+.grp h4{font-size:12px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin-bottom:10px;font-weight:600}
+.pills{display:flex;flex-wrap:wrap;gap:8px}
+.pill{padding:10px 15px;border-radius:999px;background:var(--card);border:1px solid var(--line);font-size:14px}
+.pill:active{background:var(--acc);color:#0B0B0C}
+
+/* ---------- player ---------- */
+.player{
+  position:fixed;left:0;right:0;bottom:calc(66px + env(safe-area-inset-bottom));
+  z-index:40;padding:0 14px;
+}
+.player-in{
+  max-width:452px;margin:0 auto;display:flex;align-items:center;gap:12px;
+  background:rgba(22,22,25,.92);backdrop-filter:blur(24px) saturate(1.4);
+  border:1px solid var(--line);border-radius:20px;padding:9px 12px;
+}
+.disc{position:relative;border-radius:50%;flex:none;
+  background:
+    repeating-radial-gradient(circle at 50% 50%, #1d1d20 0 1px, #0c0c0e 1px 3px),
+    radial-gradient(circle at 50% 50%, #2a2a2e 0%, #08080a 70%);
+  box-shadow:0 6px 18px rgba(0,0,0,.55), inset 0 0 0 1px rgba(255,255,255,.05);
+}
+.disc::after{content:"";position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(from 210deg, rgba(255,255,255,.10), transparent 28%, transparent 72%, rgba(255,255,255,.06));pointer-events:none}
+.disc .lbl{position:absolute;inset:31%;border-radius:50%;display:grid;place-items:center;
+  background:radial-gradient(circle at 35% 30%, #E9FF8A, #D7FF3E 55%, #9CBF1E);
+  color:#0B0B0C;font-size:8px;font-weight:800;letter-spacing:.04em;text-align:center;line-height:1.1;overflow:hidden}
+.disc .hole{position:absolute;top:50%;left:50%;width:5px;height:5px;margin:-2.5px 0 0 -2.5px;border-radius:50%;background:#0B0B0C}
+.spin{animation:spin 4.2s linear infinite}
+.spin.slow{animation-duration:7s}
+@keyframes spin{to{transform:rotate(360deg)}}
+.mini{width:44px;height:44px}
+.mini .lbl{font-size:0}
+.big-disc{width:230px;height:230px;margin:0 auto}
+.big-disc .lbl{font-size:13px;padding:10px}
+.trk{flex:1;min-width:0}
+.trk .n{font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trk .s{font-size:11px;color:var(--dim);margin-top:2px}
+.pbtn{width:40px;height:40px;border-radius:50%;background:var(--acc);color:#0B0B0C;display:grid;place-items:center;font-size:15px;flex:none}
+.pbtn:active{transform:scale(.92)}
+
+/* player sheet */
+.sheet{position:fixed;inset:0;z-index:60;background:rgba(8,8,10,.97);backdrop-filter:blur(20px);
+  display:none;flex-direction:column;padding:calc(env(safe-area-inset-top) + 18px) 22px calc(env(safe-area-inset-bottom) + 26px)}
+.sheet.open{display:flex}
+.sheet .close{align-self:flex-end;font-size:13px;color:var(--mut);padding:8px 12px;border:1px solid var(--line);border-radius:999px}
+.sheet .body{flex:1;display:flex;flex-direction:column;justify-content:center;gap:26px}
+.song{text-align:center}
+.song .t{font-size:22px;font-weight:750;letter-spacing:-.01em}
+.song .a{font-size:13px;color:var(--mut);margin-top:6px}
+.ctrls{display:flex;align-items:center;justify-content:center;gap:26px}
+.ctrl{width:54px;height:54px;border-radius:50%;background:rgba(255,255,255,.07);display:grid;place-items:center;font-size:19px}
+.ctrl.main{width:72px;height:72px;background:var(--acc);color:#0B0B0C;font-size:24px}
+.bar{height:3px;background:rgba(255,255,255,.12);border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;width:0%;background:var(--acc);transition:width .2s linear}
+.times{display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-top:8px}
+.addmusic{width:100%;height:52px;border-radius:16px;border:1px dashed rgba(255,255,255,.18);color:var(--mut);font-size:14px}
+
+/* ---------- tabbar ---------- */
+.tabs{position:fixed;left:0;right:0;bottom:0;z-index:50;
+  padding:8px 14px calc(env(safe-area-inset-bottom) + 8px);
+  background:linear-gradient(to top, rgba(11,11,12,.98) 55%, rgba(11,11,12,0));}
+.tabs-in{max-width:452px;margin:0 auto;display:flex;background:rgba(22,22,25,.96);border:1px solid var(--line);border-radius:18px;padding:5px;backdrop-filter:blur(24px)}
+.tab{flex:1;padding:11px 0;border-radius:14px;text-align:center;font-size:12px;color:var(--mut);font-weight:650;letter-spacing:.02em}
+.tab.on{background:rgba(255,255,255,.09);color:var(--fg)}
+.tab .ic{display:block;font-size:16px;margin-bottom:3px;line-height:1}
+
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fld{display:block;background:var(--card2);border-radius:14px;padding:10px 14px}
+.fld span{display:block;font-size:10px;letter-spacing:.08em;color:var(--dim);margin-bottom:4px}
+.fld input{width:100%;background:none;border:none;outline:none;font-size:19px;font-weight:700;color:var(--fg);font-variant-numeric:tabular-nums}
+.fld input::placeholder{color:#3A3A40}
+.seg{display:flex;gap:8px;margin-top:12px}
+.seg button{flex:1;padding:12px;border-radius:14px;background:var(--card2);color:var(--mut);font-size:14px;font-weight:700}
+.seg button.on{background:var(--acc);color:#0B0B0C}
+.stat{display:flex;align-items:baseline;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line)}
+.stat:last-child{border-bottom:none}
+.stat .k{font-size:13px;color:var(--mut)}
+.stat .v{font-size:17px;font-weight:750;font-variant-numeric:tabular-nums}
+.stat .v small{font-size:11px;color:var(--dim);font-weight:600;margin-left:3px}
+.page{display:none}
+.page.on{display:block;animation:fade .22s ease}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.sheet.info .info-body{display:block;overflow-y:auto;justify-content:flex-start;padding-right:4px}
+.mv-name{font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.15}
+.mv-en{font-size:11px;color:var(--dim);margin-top:6px;letter-spacing:.12em;text-transform:uppercase}
+.mv-tags{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.mv-tags span{padding:6px 13px;border-radius:999px;background:rgba(215,255,62,.12);color:var(--acc);font-size:12px;font-weight:700}
+.mv-sec{margin-top:22px}
+.mv-sec h5{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin-bottom:9px;font-weight:600}
+.mv-sec p{font-size:15px;line-height:1.6;color:var(--fg)}
+.mv-sec ol,.mv-sec ul{padding-left:19px;font-size:15px;line-height:1.65;color:#D8D6D0}
+.mv-sec li{margin-bottom:7px}
+.mv-hint{font-size:12px;color:var(--dim);line-height:1.6;margin-top:10px}
+
+.toast{position:fixed;left:50%;bottom:190px;transform:translate(-50%,10px);background:var(--acc);color:#0B0B0C;
+  padding:11px 20px;border-radius:999px;font-size:14px;font-weight:750;opacity:0;pointer-events:none;transition:.25s;z-index:70;white-space:nowrap}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+
+/* =========================================================
+   8-BIT 像素皮肤（PICO-8 / NES 复古）
+   ========================================================= */
+@font-face{
+  font-family:'PX';
+  src:url('fonts/press2p.woff2') format('woff2');
+  font-display:swap;
+}
+:root{
+  --bg:#0D0D14; --card:#171726; --card2:#20203A;
+  --fg:#FFF1E8; --mut:#8C8CA8; --dim:#56566E;
+  --acc:#00E436; --warn:#FF004D; --line:#33334D; --r:0px;
+  --px:'PX',"PingFang SC","Hiragino Sans GB","Microsoft YaHei",monospace;
+  --sh:4px 4px 0 #000;
+}
+body{
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  letter-spacing:.02em;
+  background-color:var(--bg);
+  background-image:
+    linear-gradient(rgba(255,255,255,.022) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.022) 1px,transparent 1px);
+  background-size:16px 16px;
+  background-attachment:fixed;
+}
+/* 扫描线 */
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:9000;
+  background:repeating-linear-gradient(0deg,rgba(0,0,0,.30) 0 1px,transparent 1px 3px);
+  opacity:.6;
+}
+/* 硬边卡片 */
+.card{
+  background:var(--card);border:3px solid var(--line);border-radius:0;
+  box-shadow:var(--sh);padding:18px;margin-bottom:16px;
+}
+/* 进度页动作卡（原 20px 圆角漏改，2026-10-27 补） */
+.excard{
+  background:var(--card);border:3px solid var(--line);border-radius:0;
+  box-shadow:var(--sh);padding:16px 18px;margin-bottom:16px;
+}
+.excard .adv{border-left:3px solid var(--acc);padding-left:12px}
+.excard .top .val{font-family:var(--px);font-size:13px}
+.excard .top .val span{font-family:var(--px)}
+.card-hd{margin-bottom:14px}
+.lab{font-size:10px;letter-spacing:.14em;color:var(--mut);font-weight:800}
+.date{font-family:var(--px);font-size:8px;letter-spacing:.06em;color:var(--acc)}
+.title{font-size:28px;font-weight:900;letter-spacing:-.01em;text-shadow:3px 3px 0 rgba(0,228,54,.25)}
+.head-act{border-radius:0;border:2px solid var(--line);box-shadow:2px 2px 0 #000;padding:7px 12px;font-size:12px}
+.head-act:active{transform:translate(2px,2px);box-shadow:none;background:var(--acc);color:#0D0D14}
+
+/* 按钮 */
+.big{
+  border-radius:0;border:3px solid #000;box-shadow:var(--sh);
+  background:var(--acc);color:#0D0D14;font-weight:900;letter-spacing:.02em;
+  height:58px;font-size:16px;
+}
+.big:active{transform:translate(4px,4px);box-shadow:none}
+.big.ghost{background:var(--card);color:var(--fg);border:3px solid var(--line)}
+.big.dark{background:var(--card2);color:var(--fg)}
+
+/* 胶囊 / 芯片 */
+.pill,.chip{
+  border-radius:0;border:2px solid var(--line);background:var(--card);
+  box-shadow:2px 2px 0 #000;padding:8px 12px;font-size:13px;
+}
+.pill:active,.chip:active{transform:translate(2px,2px);box-shadow:none;background:var(--acc);color:#0D0D14}
+.chip.on{background:var(--acc);color:#0D0D14;border-color:#000}
+
+/* 步进器 */
+.sbtn,.fld,.seg button{border-radius:0!important}
+.fld{background:var(--card2);border:2px solid var(--line);box-shadow:2px 2px 0 #000}
+.seg button{border:2px solid var(--line);box-shadow:2px 2px 0 #000}
+.seg button.on{background:var(--acc);color:#0D0D14;border-color:#000}
+
+/* 底部 tab */
+.tabs{border-radius:0!important;border:3px solid var(--line)!important;background:#12121E!important;
+  box-shadow:var(--sh);backdrop-filter:none!important}
+.tab{border-radius:0!important;font-size:12px;font-weight:800;letter-spacing:.04em}
+.tab.on{background:var(--acc)!important;color:#0D0D14!important;box-shadow:2px 2px 0 #000}
+
+/* 弹层 */
+.sheet{border-radius:0!important;border-top:4px solid var(--acc)!important;background:#12121E!important}
+.close{border-radius:0;border:2px solid var(--line);box-shadow:2px 2px 0 #000}
+
+/* 计时环 → 像素格 */
+.pxring{position:relative;width:184px;height:184px;margin:0 auto}
+.pxcells{position:absolute;inset:0}
+.pxcells i{
+  position:absolute;display:block;width:12px;height:12px;
+  background:#242438;box-shadow:inset 0 0 0 2px #0D0D14;
+  transition:background .12s linear;
+}
+.pxcells i.on{background:var(--acc);box-shadow:0 0 8px rgba(0,228,54,.6),inset 0 0 0 2px rgba(0,0,0,.35)}
+.tleft{
+  font-family:var(--px)!important;font-size:26px!important;letter-spacing:-.02em;
+  color:var(--acc);text-shadow:3px 3px 0 rgba(0,228,54,.18),0 0 18px rgba(0,228,54,.35);
+}
+.tsub{font-size:11px;color:var(--mut);margin-top:10px;letter-spacing:.18em;font-weight:800}
+
+/* 黑胶 → 像素唱片 */
+.disc{
+  background:repeating-radial-gradient(circle at 50% 50%,#20203A 0 2px,#0D0D14 2px 5px)!important;
+  box-shadow:4px 4px 0 #000,inset 0 0 0 3px #33334D!important;
+}
+.disc .lbl{
+  background:var(--acc)!important;color:#0D0D14!important;
+  font-family:var(--px)!important;border-radius:50%!important;
+  box-shadow:inset 0 0 0 2px rgba(0,0,0,.35);
+}
+.disc .hole{background:#0D0D14!important;border-radius:0!important;width:6px!important;height:6px!important;margin:-3px 0 0 -3px!important}
+
+/* 播放器条 */
+.player-in{
+  border-radius:0!important;border:3px solid var(--line)!important;
+  background:#12121E!important;box-shadow:var(--sh);backdrop-filter:none!important;
+}
+.player .pn{font-weight:800}
+.player .ps{color:var(--dim)!important}
+
+/* tab 容器（真实类名 .tabs-in） */
+.tabs{background:linear-gradient(to top,#0D0D14 60%,rgba(13,13,20,0))!important}
+.tabs-in{
+  border-radius:0!important;border:3px solid var(--line)!important;
+  background:#12121E!important;box-shadow:var(--sh);backdrop-filter:none!important;
+}
+.tab{border-radius:0!important}
+.pbtn{
+  border-radius:0!important;border:3px solid #000;box-shadow:2px 2px 0 #000;
+  background:var(--acc)!important;color:#0D0D14!important;font-weight:900;
+}
+.pbtn:active{transform:translate(2px,2px);box-shadow:none}
+.addmusic{border-radius:0!important;border:3px dashed var(--line)!important}
+
+/* 步进器 */
+.step{background:var(--card2)!important;border-radius:0!important;border:2px solid var(--line);box-shadow:2px 2px 0 #000}
+.sbtn{background:#242438!important;border:2px solid var(--line);box-shadow:2px 2px 0 #000;font-family:var(--px);font-size:15px!important}
+.sbtn:active{transform:translate(2px,2px)!important;box-shadow:none;background:var(--acc)!important;color:#0D0D14!important}
+.sval{font-family:var(--px);font-size:19px!important;letter-spacing:0;line-height:1.1}
+.sval b{display:block;line-height:1.15}
+.sval span{font-family:var(--px);font-size:7px!important;letter-spacing:.1em;line-height:1;margin:0 0 5px}
+.sval b{font-weight:400}
+
+/* 搜索框 / 输入 */
+#libSearch{
+  border-radius:0!important;border:3px solid var(--line)!important;
+  background:#12121E!important;box-shadow:var(--sh);padding:13px 14px!important;
+}
+::placeholder{color:#6A6A86!important;opacity:1}
+.fld input::placeholder{color:#6A6A86!important}
+.fld input{color:var(--fg)!important}
+.fld span{color:var(--mut)!important}
+
+/* 去掉数字输入框的上下箭头 */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+input[type=number]{-moz-appearance:textfield}
+
+/* 数字统一像素字体感 */
+.stat .v,.num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+.toast{border-radius:0!important;border:3px solid var(--acc)!important;box-shadow:var(--sh);background:#12121E!important}
+
+/* 进度条 / 细线 */
+hr,.line{border-color:var(--line)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ 训练页 ============ -->
+  <section class="page on" id="p-train">
+    <div class="head">
+      <div>
+        <div class="date" id="dateLine">—</div>
+        <div class="title" id="sessTitle">训练</div>
+      </div>
+      <button class="head-act" id="finishBtn">结束</button>
+    </div>
+
+    <div class="card">
+      <div class="card-hd">
+        <div>
+          <div class="lab">当前动作</div>
+          <div class="ex-name" id="exName">—</div>
+        </div>
+        <button class="link" id="changeEx">更换 ›</button>
+      </div>
+      <div class="ex-last" id="exLast">还没记录过这个动作</div>
+
+      <div class="row" style="margin-top:18px">
+        <div class="step">
+          <button class="sbtn" data-k="w" data-d="-1">−</button>
+          <div class="sval num"><span>KG</span><b id="wVal">10</b></div>
+          <button class="sbtn" data-k="w" data-d="1">+</button>
+        </div>
+        <div class="step">
+          <button class="sbtn" data-k="r" data-d="-1">−</button>
+          <div class="sval num"><span>REPS</span><b id="rVal">10</b></div>
+          <button class="sbtn" data-k="r" data-d="1">+</button>
+        </div>
+      </div>
+
+      <button class="big" id="addSet">完成一组</button>
+
+      <div class="sets" id="setList" style="display:none"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd" style="margin-bottom:6px">
+        <div class="lab">组间休息 <span id="awakeTag" style="margin-left:8px;font-size:10px;letter-spacing:.06em;color:var(--dim)">检测中</span></div>
+        <button class="link" id="skipRest" style="display:none">跳过</button>
+      </div>
+      <div class="rest">
+        <div class="ring pxring">
+          <div class="pxcells" id="pxCells"></div>
+          <div class="inner">
+            <div class="tleft num" id="restTime">2:00</div>
+            <div class="tsub" id="restState">待开始</div>
+          </div>
+        </div>
+      </div>
+      <div class="chips" id="restChips">
+        <button class="chip" data-s="60">60s</button>
+        <button class="chip" data-s="90">90s</button>
+        <button class="chip on" data-s="120">120s</button>
+        <button class="chip" data-s="180">180s</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 数据页 ============ -->
+  <section class="page" id="p-stats">
+    <div class="head">
+      <div>
+        <div class="date">Progressive Overload</div>
+        <div class="title">进度</div>
+      </div>
+    </div>
+    <div id="statsBody"></div>
+  </section>
+
+  <!-- ============ 动作库 ============ -->
+  <section class="page" id="p-lib">
+    <div class="head">
+      <div>
+        <div class="date">Movement Library</div>
+        <div class="title">动作库</div>
+      </div>
+      <button class="head-act" id="addLib">＋ 自定义</button>
+    </div>
+    <input id="libSearch" placeholder="搜动作 / 肌群 / 器械" autocomplete="off"
+      style="width:100%;background:#151518;border:1px solid rgba(255,255,255,.07);border-radius:16px;
+      padding:14px 16px;font-size:15px;color:#F2F0EA;margin-bottom:16px;outline:none">
+    <div id="libBody"></div>
+  </section>
+
+  <!-- ============ 我 ============ -->
+  <section class="page" id="p-me">
+    <div class="head">
+      <div>
+        <div class="date">Body Profile</div>
+        <div class="title">我</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="lab" style="margin-bottom:14px">身体数据</div>
+      <div class="fields">
+        <label class="fld"><span>身高 cm</span><input id="pfH" type="number" inputmode="decimal" placeholder="175"></label>
+        <label class="fld"><span>体重 kg</span><input id="pfW" type="number" inputmode="decimal" placeholder="70"></label>
+        <label class="fld"><span>年龄</span><input id="pfA" type="number" inputmode="numeric" placeholder="28"></label>
+        <label class="fld"><span>体脂 %（可不填）</span><input id="pfBf" type="number" inputmode="decimal" placeholder="—"></label>
+      </div>
+      <div class="seg" id="pfSex">
+        <button data-v="m" class="on">男</button>
+        <button data-v="f">女</button>
+      </div>
+      <div class="ex-last" style="margin-top:12px">体脂不知道就空着；腰围颈围量了能估算，误差约 3%</div>
+      <div class="row" style="margin-top:12px">
+        <label class="fld" style="flex:1"><span>颈围 cm</span><input id="pfNeck" type="number" inputmode="decimal" placeholder="38"></label>
+        <label class="fld" style="flex:1"><span>腰围 cm</span><input id="pfWaist" type="number" inputmode="decimal" placeholder="82"></label>
+      </div>
+      <div class="row" style="margin-top:10px" id="wrapHip">
+        <label class="fld" style="flex:1;display:none" id="fldHip"><span>臀围 cm（女性必填）</span><input id="pfHip" type="number" inputmode="decimal" placeholder="95"></label>
+      </div>
+      <button class="big ghost" id="calcBf" style="margin-top:12px;height:48px;font-size:14px">用围度估算体脂</button>
+    </div>
+
+    <div id="bodyStats"></div>
+
+    <div class="card">
+      <div class="lab" style="margin-bottom:14px">三大项 1RM（可选，用来判断力量水平）</div>
+      <div class="fields">
+        <label class="fld"><span>卧推 kg</span><input id="lfBench" type="number" inputmode="decimal" placeholder="—"></label>
+        <label class="fld"><span>深蹲 kg</span><input id="lfSquat" type="number" inputmode="decimal" placeholder="—"></label>
+        <label class="fld"><span>硬拉 kg</span><input id="lfDead" type="number" inputmode="decimal" placeholder="—"></label>
+      </div>
+    </div>
+
+    <div id="liftStats"></div>
+    <div class="card">
+      <div class="lab">形体记录</div>
+      <div class="adv" style="margin-top:10px">照片这块，最靠谱的用法不是让 AI 猜体脂——是固定角度、固定光线、同一时间拍，一个月三张，自己看变化。要 AI 看形体，把照片发企微给我，我给你说肌肉分布和优先级。</div>
+    </div>
+  </section>
+
+</div>
+
+<!-- ============ 常驻播放器 ============ -->
+<div class="player">
+  <div class="player-in">
+    <div class="disc mini" id="vinylMini"><div class="lbl">REPS</div><div class="hole"></div></div>
+    <div class="trk">
+      <div class="n" id="trkName">还没放歌</div>
+      <div class="s" id="trkSub">点黑胶选文件</div>
+    </div>
+    <button class="pbtn" id="playBtn">▶</button>
+  </div>
+</div>
+
+<!-- ============ 全屏播放器 ============ -->
+<div class="sheet" id="sheet">
+  <button class="close" id="sheetClose">收起</button>
+  <div class="body">
+    <div class="disc big-disc spin" id="vinylBig" style="animation-play-state:paused">
+      <div class="lbl">REPS</div><div class="hole"></div>
+    </div>
+    <div class="song">
+      <div class="t" id="sheetName">还没放歌</div>
+      <div class="a" id="sheetSub">从手机里选一首</div>
+    </div>
+    <div>
+      <div class="bar"><i id="progBar"></i></div>
+      <div class="times"><span id="tCur">0:00</span><span id="tDur">0:00</span></div>
+    </div>
+    <div class="ctrls">
+      <button class="ctrl" id="prevBtn">⏮</button>
+      <button class="ctrl main" id="playBtn2">▶</button>
+      <button class="ctrl" id="nextBtn">⏭</button>
+    </div>
+    <button class="addmusic" id="pickMusic">＋ 添加音乐（可多选）</button>
+  </div>
+</div>
+
+<div class="sheet info" id="infoSheet">
+  <button class="close" id="infoClose">收起</button>
+  <div class="body info-body" id="infoBody"></div>
+</div>
+
+<input type="file" id="fileIn" accept="audio/*" multiple hidden>
+<div class="toast" id="toast"></div>
+
+<script src="data/moves.js"></script>
+<script>
+/* =========================================================
+   REPS v0.1  —  组间计时 / 训练记录 / 渐进超负荷 / 黑胶播放器
+   纯前端，localStorage 存储，离线可用
+   ========================================================= */
+const KEY = 'reps.v1';
+
+const DEFAULT_LIB = [
+  ['胸','卧推'],['胸','上斜卧推'],['胸','哑铃飞鸟'],['胸','双杠臂屈伸'],
+  ['背','引体向上'],['背','高位下拉'],['背','杠铃划船'],['背','坐姿划船'],['背','直臂下压'],
+  ['腿','深蹲'],['腿','硬拉'],['腿','腿举'],['腿','保加利亚分腿蹲'],['腿','腿弯举'],
+  ['肩','实力推'],['肩','侧平举'],['肩','后束绳索Y举'],['肩','面拉'],['肩','绳索Y字举'],
+  ['臂','杠铃弯举'],['臂','锤式弯举'],['臂','绳索下压'],['臂','窄距卧推'],
+  ['核心','悬垂举腿'],['核心','卷腹'],['核心','反向山羊挺身']
+];
+
+let DB = load();
+function load(){
+  try{
+    const d = JSON.parse(localStorage.getItem(KEY));
+    if(d && d.lib) return d;
+  }catch(e){}
+  return { lib: DEFAULT_LIB.map(x=>({g:x[0], n:x[1]})), sessions: [], restSec:120, cur:null, idx:0, w:10, r:10 };
+}
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(DB)); }catch(e){} }
+
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const fmt = s => { s=Math.max(0,Math.round(s)); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); };
+
+/* ---------- 训练会话 ---------- */
+function ensureSession(){
+  if(!DB.cur){
+    DB.cur = { date: new Date().toISOString(), exercises: [] };
+    DB.idx = 0;
+    if(!DB.cur.exercises.length){
+      DB.cur.exercises.push({ name: DB.lib[0] ? DB.lib[0].n : '卧推', sets: [] });
+    }
+    save();
+  }
+  return DB.cur;
+}
+function curEx(){ const s = ensureSession(); return s.exercises[Math.min(DB.idx, s.exercises.length-1)]; }
+
+/* ---------- 估算 1RM (Epley) ---------- */
+const e1rm = (w,r) => r>0 ? w*(1+r/30) : 0;
+
+/* ---------- 历史查询 ---------- */
+function historyOf(name){
+  const out = [];
+  DB.sessions.forEach(s=>{
+    const ex = s.exercises.find(e=>e.name===name);
+    if(ex && ex.sets.length) out.push({ date:s.date, sets:ex.sets });
+  });
+  if(DB.cur){
+    const ex = DB.cur.exercises.find(e=>e.name===name);
+    if(ex && ex.sets.length) out.push({ date:DB.cur.date, sets:ex.sets, live:true });
+  }
+  return out;
+}
+
+/* =========================================================
+   渲染 · 训练页
+   ========================================================= */
+function renderHead(){
+  const d = new Date();
+  const wk = ['周日','周一','周二','周三','周四','周五','周六'][d.getDay()];
+  $('#dateLine').textContent = `${d.getMonth()+1}月${d.getDate()}日 · ${wk}`;
+}
+function renderTrain(){
+  const s = ensureSession();
+  const ex = curEx();
+  $('#exName').textContent = ex.name;
+
+  const h = historyOf(ex.name).filter(x=>!x.live);
+  if(h.length){
+    const last = h[h.length-1].sets;
+    const wmax = Math.max(...last.map(x=>x.w));
+    const best = Math.max(...last.map(x=>e1rm(x.w,x.r)));
+    $('#exLast').textContent = `上次 ${last.length} 组 · 最重 ${wmax}kg · 估算 1RM ${best.toFixed(1)}kg`;
+  }else{
+    $('#exLast').textContent = '还没记录过这个动作，先找能做完 8-12 次的重量';
+  }
+
+  $('#wVal').textContent = DB.w;
+  $('#rVal').textContent = DB.r;
+
+  // 本次已做组
+  const list = $('#setList');
+  if(ex.sets.length){
+    list.style.display = 'block';
+    list.innerHTML = ex.sets.map((x,i)=>
+      `<div class="setrow"><span class="i num">${i+1}</span>
+        <span class="v num">${x.w} kg × ${x.r}</span>
+        <span class="t num">e1RM ${e1rm(x.w,x.r).toFixed(1)}</span>
+        <span class="tick">✓</span></div>`
+    ).join('');
+  }else{
+    list.style.display = 'none';
+  }
+}
+
+/* =========================================================
+   组间计时
+   ========================================================= */
+const T = { endAt:0, h:null, running:false, total:120 };
+
+function paintTimer(left){
+  const total = T.total || 1;
+  const p = Math.max(0, Math.min(1, left/(total*1000)));
+  if($('#ringBar')) $('#ringBar').setAttribute('stroke-dashoffset', (527.8*(1-p)).toFixed(1));
+  paintPxRing(p);
+  $('#restTime').textContent = fmt(left/1000);
+}
+/* ---------- 像素环 ---------- */
+const PX_N = 28;
+function buildPxRing(){
+  const box = $('#pxCells'); if(!box) return;
+  box.innerHTML = '';
+  for(let i=0;i<PX_N;i++){
+    const a = (i/PX_N)*Math.PI*2 - Math.PI/2;
+    const el = document.createElement('i');
+    el.style.left = (85 + Math.cos(a)*84) + 'px';
+    el.style.top  = (85 + Math.sin(a)*84) + 'px';
+    box.appendChild(el);
+  }
+  paintPxRing(1);
+}
+function paintPxRing(p){
+  const box = $('#pxCells'); if(!box) return;
+  const on = Math.round(Math.max(0,Math.min(1,p)) * PX_N);
+  const kids = box.children;
+  for(let i=0;i<kids.length;i++) kids[i].classList.toggle('on', i < on);
+}
+
+function tick(){
+  if(!T.running) return;
+  const left = T.endAt - Date.now();
+  if(left <= 0){
+    T.running = false; clearInterval(T.h);
+    paintTimer(0);
+    $('#restState').textContent = '开始下一组';
+    $('#restTime').textContent = 'GO';
+    beep(880,.12); setTimeout(()=>beep(1180,.16),160);
+    vibrate([120,80,220]);
+    toast('休息结束 · 上组');
+    return;
+  }
+  paintTimer(left);
+  $('#restState').textContent = '恢复中';
+}
+function startRest(sec){
+  T.total = sec; T.endAt = Date.now() + sec*1000; T.running = true;
+  $('#skipRest').style.display = 'inline';
+  clearInterval(T.h); T.h = setInterval(tick, 200); tick();
+}
+function stopRest(){
+  T.running = false; clearInterval(T.h);
+  $('#skipRest').style.display = 'none';
+  $('#restState').textContent = '待开始';
+  paintTimer(DB.restSec*1000);
+}
+function skipRest(){
+  T.running = false; clearInterval(T.h);
+  $('#skipRest').style.display = 'none';
+  paintTimer(0);
+  $('#restTime').textContent = 'GO';
+  $('#restState').textContent = '开始下一组';
+}
+
+/* ---------- 息屏保活：静音音轨（防页面被挂起）+ 屏幕常亮 ---------- */
+const SILENT = 'data:audio/wav;base64,UklGRmQfAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YUAfAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==';
+let KA = null, kaOn = false;
+
+function keepAudioAlive(){
+  if(kaOn) return;
+  try{
+    KA = KA || new Audio(SILENT);
+    KA.loop = true; KA.volume = 0.001;
+    const pr = KA.play();
+    if(pr && pr.then) pr.then(()=>{ kaOn = true; paintAwake(); }).catch(()=>paintAwake());
+  }catch(e){ paintAwake(); }
+}
+
+function paintAwake(){
+  const el = document.getElementById('awakeTag'); if(!el) return;
+  const hasWL = !!wakeLock;
+  if(hasWL && kaOn){ el.textContent = '☀ 常亮 · 保活开'; el.style.color = 'var(--acc)'; }
+  else if(hasWL){ el.textContent = '☀ 屏幕常亮'; el.style.color = 'var(--acc)'; }
+  else if(kaOn){ el.textContent = '♪ 后台保活'; el.style.color = 'var(--acc)'; }
+  else { el.textContent = '⚠ 息屏会停'; el.style.color = 'var(--warn)'; }
+}
+
+/* ---------- 声音 & 震动 ---------- */
+let AC = null;
+function beep(freq=880, dur=.15){
+  try{
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    if(AC.state === 'suspended') AC.resume();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    const t0 = AC.currentTime;
+    g.gain.setValueAtTime(.0001, t0);
+    g.gain.exponentialRampToValueAtTime(.22, t0+.02);
+    g.gain.exponentialRampToValueAtTime(.0001, t0+dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(t0); o.stop(t0+dur+.03);
+  }catch(e){}
+}
+function vibrate(p){ if(navigator.vibrate) try{ navigator.vibrate(p); }catch(e){} }
+
+/* ---------- toast ---------- */
+let toastH = null;
+function toast(msg){
+  const el = $('#toast'); el.textContent = msg; el.classList.add('on');
+  clearTimeout(toastH); toastH = setTimeout(()=>el.classList.remove('on'), 1800);
+}
+
+/* =========================================================
+   交互
+   ========================================================= */
+$$('.sbtn').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    const k = b.dataset.k, d = +b.dataset.d;
+    if(k === 'w'){ DB.w = Math.max(0, +(DB.w + d*2.5).toFixed(2)); }
+    else { DB.r = Math.max(1, DB.r + d); }
+    save(); renderTrain();
+  });
+});
+
+$('#addSet').addEventListener('click', ()=>{
+  const ex = curEx();
+  ex.sets.push({ w: DB.w, r: DB.r, ts: Date.now() });
+  save(); renderTrain();
+  beep(660,.08); vibrate(30);
+  keepAwake(); keepAudioAlive();      // 用户手势里申请，iOS 才认
+  startRest(DB.restSec);
+});
+
+$('#restChips').addEventListener('click', e=>{
+  const b = e.target.closest('.chip'); if(!b) return;
+  $$('#restChips .chip').forEach(c=>c.classList.remove('on'));
+  b.classList.add('on');
+  DB.restSec = +b.dataset.s; save();
+  if(!T.running) paintTimer(DB.restSec*1000);
+});
+$('#skipRest').addEventListener('click', skipRest);
+
+$('#changeEx').addEventListener('click', ()=>{
+  switchTab('lib');
+  toast('点一个动作设为当前');
+});
+
+$('#finishBtn').addEventListener('click', ()=>{
+  const s = DB.cur;
+  if(!s || !s.exercises.some(e=>e.sets.length)){ toast('还没有记录，先练一组'); return; }
+  if(!confirm('结束本次训练并保存？')) return;
+  DB.sessions.push({ date: s.date, exercises: s.exercises.filter(e=>e.sets.length) });
+  DB.cur = null; DB.idx = 0;
+  save(); stopRest(); renderTrain(); renderStats();
+  toast('已保存');
+});
+
+/* =========================================================
+   数据页 · 渐进超负荷
+   ========================================================= */
+function suggest(hist){
+  const last = hist[hist.length-1];
+  if(!last) return '第一次做，先找 8-12 次力竭前的重量';
+  const sets = last.sets;
+  const maxR = Math.max(...sets.map(s=>s.r));
+  const w = Math.max(...sets.map(s=>s.w));
+  const n = sets.length;
+  if(maxR >= 12 && n >= 3) return `${n} 组全到 12 次 → 下次 +2.5kg，次数回到 8-10 次`;
+  if(maxR >= 10 && n >= 3) return `已摸到 10 次 → 同重量再挤 1-2 次，稳了再加 1.25kg`;
+  if(n < 3) return `只做了 ${n} 组 → 先把组数补到 3-4 组`;
+  return `次数还没到 10 → 同一重量继续堆次数，别急着加重`;
+}
+
+function sparkline(vals, w=280, h=44){
+  if(vals.length < 2) return `<svg width="${w}" height="${h}"></svg>`;
+  const mn = Math.min(...vals), mx = Math.max(...vals);
+  const rg = (mx-mn) || 1;
+  const pts = vals.map((v,i)=>{
+    const x = (i/(vals.length-1))*(w-6)+3;
+    const y = h-4 - ((v-mn)/rg)*(h-10);
+    return [x,y];
+  });
+  const d = pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  const last = pts[pts.length-1];
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <path d="${d}" fill="none" stroke="#00E436" stroke-width="2" stroke-linecap="butt" stroke-linejoin="miter" opacity=".9"/>
+    <rect x="${(last[0]-3.5).toFixed(1)}" y="${(last[1]-3.5).toFixed(1)}" width="7" height="7" fill="#00E436"/>
+  </svg>`;
+}
+
+function renderStats(){
+  const box = $('#statsBody');
+  // 汇总所有动作
+  const names = [];
+  DB.sessions.forEach(s=>s.exercises.forEach(e=>{ if(!names.includes(e.name)) names.push(e.name); }));
+
+  if(!names.length){
+    box.innerHTML = `<div class="empty">还没有完成的训练<br><br>训练页做完一组、点「结束」保存后<br>这里会出现你的每一次进步</div>`;
+    return;
+  }
+
+  // 按最近活跃排序
+  names.sort((a,b)=>{
+    const la = historyOf(a), lb = historyOf(b);
+    return new Date(lb[lb.length-1].date) - new Date(la[la.length-1].date);
+  });
+
+  let html = '';
+  const weekCap = weekCapacity();
+  if(weekCap > 0){
+    html += `<div class="card" style="padding:18px 20px">
+      <div class="lab">本周总容量</div>
+      <div style="font-size:34px;font-weight:800;letter-spacing:-.02em;margin-top:6px" class="num">${weekCap.toLocaleString()} <span style="font-size:13px;color:var(--mut);font-weight:600">kg</span></div>
+      <div class="adv" style="margin-top:12px">容量 = 重量 × 次数 × 组数。想变强，先保证每周总容量不掉，再谈加重。</div>
+    </div>`;
+  }
+
+  names.forEach(nm=>{
+    const h = historyOf(nm);
+    const e1s = h.map(x=>Math.max(...x.sets.map(s=>e1rm(s.w,s.r))));
+    const cur = e1s[e1s.length-1];
+    const prev = e1s.length > 1 ? e1s[e1s.length-2] : null;
+    const d = prev ? cur-prev : 0;
+    const dTxt = prev ? (d>=0? `<span style="color:var(--acc)">▲ ${d.toFixed(1)}</span>` : `<span style="color:var(--warn)">▼ ${Math.abs(d).toFixed(1)}</span>`) : '';
+    const totalSets = h.reduce((a,x)=>a+x.sets.length,0);
+    html += `<div class="excard">
+      <div class="top">
+        <div class="nm">${nm} <span class="delta">${h.length} 次 · ${totalSets} 组</span></div>
+        <div class="val num">${cur.toFixed(1)}<span style="font-size:10px;color:var(--dim)"> e1RM</span></div>
+      </div>
+      ${sparkline(e1s)}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <span style="font-size:12px;color:var(--dim)">估算 1RM 趋势</span>
+        <span class="num" style="font-size:12px">${dTxt}</span>
+      </div>
+      <div class="adv">${suggest(h)}</div>
+    </div>`;
+  });
+
+  box.innerHTML = html;
+}
+
+function weekCapacity(){
+  const now = Date.now(), weekAgo = now - 7*864e5;
+  let sum = 0;
+  DB.sessions.forEach(s=>{
+    if(new Date(s.date).getTime() < weekAgo) return;
+    s.exercises.forEach(e=>e.sets.forEach(x=>{ sum += x.w * x.r; }));
+  });
+  return Math.round(sum);
+}
+
+/* =========================================================
+   动作库（109 个，含要领/错误/替代）
+   ========================================================= */
+const LIB = (window.MOVES && window.MOVES.moves) ? window.MOVES.moves : [];
+const libIndex = new Map(LIB.map(m=>[m.n, m]));
+
+function openMove(name){
+  const m = libIndex.get(name);
+  if(!m){ pickExercise(name); return; }
+  $('#infoBody').innerHTML = `
+    <div class="mv-name">${m.n}</div>
+    <div class="mv-en">${m.en}</div>
+    <div class="mv-tags"><span>${m.g}</span><span>${m.eq}</span><span>${m.p}</span></div>
+    <div class="mv-sec"><h5>目标肌</h5><p>${m.mus}</p></div>
+    <div class="mv-sec"><h5>要领</h5><ol>${m.cue.map(c=>`<li>${c}</li>`).join('')}</ol></div>
+    <div class="mv-sec"><h5>常见错误</h5><ul>${m.err.map(c=>`<li>${c}</li>`).join('')}</ul></div>
+    <div class="mv-sec"><h5>替代动作</h5><div class="pills">${m.alt.map(a=>`<button class="pill alt" data-ex="${a}">${a}</button>`).join('')}</div></div>
+    <button class="big" id="infoPick" style="margin-top:24px">设为当前动作</button>
+    <div class="mv-hint">要领是通用要点，个体结构差异大；拿不准就把教学视频发企微给我，我拆成卡补进库。</div>
+  `;
+  $('#infoSheet').classList.add('open');
+  const pk = $('#infoPick');
+  if(pk) pk.onclick = ()=>{ pickExercise(name); $('#infoSheet').classList.remove('open'); };
+  $$('#infoBody .alt').forEach(b=>{ b.onclick = ()=> openMove(b.dataset.ex); });
+}
+
+$('#infoClose').addEventListener('click', ()=> $('#infoSheet').classList.remove('open'));
+
+function pickExercise(name){
+  const s = ensureSession();
+  let i = s.exercises.findIndex(e=>e.name===name);
+  if(i < 0){ s.exercises.push({ name, sets: [] }); i = s.exercises.length-1; }
+  DB.idx = i; save();
+  switchTab('train'); renderTrain();
+  toast('当前动作：'+name);
+}
+
+function renderLib(){
+  const q = ($('#libSearch') ? $('#libSearch').value : '').trim().toLowerCase();
+  if(q){
+    const hits = LIB.filter(m => (m.n + m.en + m.mus + m.eq + m.g + m.p).toLowerCase().includes(q));
+    if(!hits.length){
+      $('#libBody').innerHTML = `<div class="empty">没找到「${q}」<br><br>库里暂时没有这个动作<br>把教学视频发企微给我，我拆成要领卡加进来</div>`;
+      return;
+    }
+    $('#libBody').innerHTML = `<div class="grp"><h4>找到 ${hits.length} 个</h4><div class="pills">` +
+      hits.map(m=>`<button class="pill" data-ex="${m.n}">${m.n}</button>`).join('') + `</div></div>`;
+    return;
+  }
+  const groups = {};
+  LIB.forEach(m=>{ (groups[m.g] = groups[m.g] || []).push(m.n); });
+  DB.lib.forEach(x=>{ if(!libIndex.has(x.n)){ (groups[x.g] = groups[x.g] || []).push(x.n); } });
+  let html = '';
+  Object.keys(groups).forEach(g=>{
+    html += `<div class="grp"><h4>${g} <span style="color:#3A3A40">${groups[g].length}</span></h4><div class="pills">` +
+      groups[g].map(n=>`<button class="pill" data-ex="${n}">${n}</button>`).join('') +
+      `</div></div>`;
+  });
+  $('#libBody').innerHTML = html;
+}
+
+if($('#libSearch')) $('#libSearch').addEventListener('input', renderLib);
+
+$('#libBody').addEventListener('click', e=>{
+  const b = e.target.closest('.pill'); if(!b) return;
+  openMove(b.dataset.ex);
+});
+
+$('#addLib').addEventListener('click', ()=>{
+  const nm = prompt('动作名称'); if(!nm) return;
+  const g = prompt('部位（胸/背/腿/肩/臂/核心/其他）','其他') || '其他';
+  DB.lib.push({ g, n: nm.trim() }); save(); renderLib();
+});
+
+/* =========================================================
+   Tab
+   ========================================================= */
+const tabs = [
+  { id:'train', t:'训练' },
+  { id:'stats', t:'进度' },
+  { id:'lib',   t:'动作库' },
+  { id:'me',    t:'我' }
+];
+(function buildTabs(){
+  const el = document.createElement('div');
+  el.className = 'tabs';
+  el.innerHTML = `<div class="tabs-in">${tabs.map(t=>
+    `<button class="tab${t.id==='train'?' on':''}" data-t="${t.id}">${t.t}</button>`
+  ).join('')}</div>`;
+  document.body.appendChild(el);
+  el.addEventListener('click', e=>{
+    const b = e.target.closest('.tab'); if(!b) return;
+    switchTab(b.dataset.t);
+  });
+})();
+
+function switchTab(id){
+  $$('.tab').forEach(t=>t.classList.toggle('on', t.dataset.t===id));
+  $$('.page').forEach(p=>p.classList.toggle('on', p.id==='p-'+id));
+  if(id === 'stats') renderStats();
+  if(id === 'lib') renderLib();
+  if(id === 'me') renderMe();
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+/* =========================================================
+   身体档案 · 计算
+   ========================================================= */
+function renderMe(){
+  const p = DB.profile || (DB.profile = {});
+  const setV = (id, v)=>{ const el = $('#'+id); if(el) el.value = (v==null||v===''?'' : v); };
+  setV('pfH', p.h); setV('pfW', p.w); setV('pfA', p.age); setV('pfBf', p.bf);
+  setV('pfNeck', p.neck); setV('pfWaist', p.waist); setV('pfHip', p.hip);
+  const fh = $('#fldHip'); if(fh) fh.style.display = (p.sex==='f') ? 'block' : 'none';
+  setV('lfBench', p.bench); setV('lfSquat', p.squat); setV('lfDead', p.dead);
+  $$('#pfSex button').forEach(b=> b.classList.toggle('on', (p.sex||'m') === b.dataset.v));
+  calcBody();
+}
+
+function sexOf(){ return (DB.profile && DB.profile.sex) || 'm'; }
+
+function calcBody(){
+  const p = DB.profile || {};
+  const h = +p.h, w = +p.w, age = +p.age, bf = +p.bf;
+  const box = $('#bodyStats');
+
+  if(!h || !w){
+    box.innerHTML = '<div class="card"><div class="adv">填了身高体重，这里会算 BMI、理想体重区间、基础代谢和每日消耗。</div></div>';
+    return;
+  }
+  const m = h/100;
+  const bmi = w/(m*m);
+  const bmiTag = bmi<18.5 ? '偏瘦' : bmi<24 ? '正常' : bmi<28 ? '超重' : '肥胖';
+  const lo = (18.5*m*m), hi = (24*m*m);
+  const bmr = 10*w + 6.25*h - 5*(age||28) + (sexOf()==='m'?5:-161);
+  const tdee = bmr*1.55;
+
+  let rows = `
+    <div class="stat"><span class="k">BMI</span><span class="v">${bmi.toFixed(1)}<small>${bmiTag}</small></span></div>
+    <div class="stat"><span class="k">理想体重区间（BMI 18.5-24）</span><span class="v">${lo.toFixed(0)}-${hi.toFixed(0)}<small>kg</small></span></div>
+    <div class="stat"><span class="k">基础代谢 BMR</span><span class="v">${Math.round(bmr)}<small>kcal</small></span></div>
+    <div class="stat"><span class="k">每日消耗（每周练 3-5 次）</span><span class="v">${Math.round(tdee)}<small>kcal</small></span></div>`;
+
+  if(bf > 0){
+    const lbm = w*(1-bf/100);
+    const ffmi = lbm/(m*m);
+    const tag = ffmi<18?'普通':ffmi<20?'有点基础':ffmi<22?'不错':ffmi<24?'很强':'接近自然上限';
+    rows += `<div class="stat"><span class="k">去脂体重 / FFMI</span><span class="v">${lbm.toFixed(1)}kg · ${ffmi.toFixed(1)}<small>${tag}</small></span></div>`;
+    rows += `<div class="stat"><span class="k">减脂到 15% 需减</span><span class="v">${Math.max(0,(w - lbm/0.85)).toFixed(1)}<small>kg</small></span></div>`;
+  }
+
+  box.innerHTML = `<div class="card"><div class="lab" style="margin-bottom:10px">身体指标</div>${rows}
+    <div class="adv" style="margin-top:12px">${bmi>=24 ? '先控体脂再谈增肌，体重降 5-8% 力量反而涨。' : bmi<18.5 ? '偏瘦，热量盈余 +300 kcal，优先练大肌群。' : '体重正常，可以进入增肌或塑形阶段。'}</div></div>`;
+
+  calcLift();
+}
+
+function calcLift(){
+  const p = DB.profile || {};
+  const w = +p.w;
+  const box = $('#liftStats');
+  if(!w){ box.innerHTML = ''; return; }
+  const defs = [
+    { k:'bench', label:'卧推', std:[0.5,0.75,1.0,1.5] },
+    { k:'squat', label:'深蹲', std:[0.75,1.0,1.5,2.0] },
+    { k:'dead',  label:'硬拉', std:[1.0,1.25,1.75,2.5] }
+  ];
+  const rows = [];
+  defs.forEach(d=>{
+    const v = +p[d.k];
+    if(!v) return;
+    const r = v/w;
+    const lvl = r < d.std[0] ? '入门' : r < d.std[1] ? '初级' : r < d.std[2] ? '中级' : r < d.std[3] ? '进阶' : '精英';
+    rows.push(`<div class="stat"><span class="k">${d.label}</span><span class="v">${v}kg · ${r.toFixed(2)}×<small>${lvl}</small></span></div>`);
+  });
+  if(!rows.length){ box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="card"><div class="lab" style="margin-bottom:10px">力量水平（相对体重）</div>${rows.join('')}
+    <div class="adv" style="margin-top:12px">倍数比绝对重量更公平——体重变了要重新比。男生的中级线：卧推 1×体重、深蹲 1.5×、硬拉 1.75×。</div></div>`;
+}
+
+function estBodyFat(){
+  const p = DB.profile || {};
+  const neck = +p.neck, waist = +p.waist, h = +p.h;
+  if(!neck || !waist || !h){ toast('先填身高、颈围、腰围'); return; }
+  let bf;
+  if(sexOf() === 'm'){
+    bf = 495/(1.0324 - 0.19077*Math.log10(waist-neck) + 0.15456*Math.log10(h)) - 450;
+  }else{
+    const hip = +p.hip;
+    if(!hip){ toast('女性体脂需要臀围'); return; }
+    bf = 495/(1.29579 - 0.35004*Math.log10(waist+hip-neck) + 0.22100*Math.log10(h)) - 450;
+  }
+  if(!isFinite(bf) || bf<=0 || bf>60){ toast('围度数值看着不对，检查一下'); return; }
+  p.bf = +bf.toFixed(1); save();
+  $('#pfBf').value = p.bf;
+  calcBody();
+  toast('估算体脂 '+p.bf+'%（Navy 公式，误差 ±3%）');
+}
+
+(function bindMe(){
+  const bindNum = (id, key)=> $('#'+id).addEventListener('input', e=>{
+    const v = e.target.value.trim();
+    DB.profile = DB.profile || {};
+    DB.profile[key] = v === '' ? null : +v;
+    save(); calcBody();
+  });
+  bindNum('pfH','h'); bindNum('pfW','w'); bindNum('pfA','age'); bindNum('pfBf','bf');
+  bindNum('pfNeck','neck'); bindNum('pfWaist','waist'); bindNum('pfHip','hip');
+  bindNum('lfBench','bench'); bindNum('lfSquat','squat'); bindNum('lfDead','dead');
+  $$('#pfSex button').forEach(b=> b.addEventListener('click', ()=>{
+    DB.profile = DB.profile || {};
+    DB.profile.sex = b.dataset.v; save(); renderMe();
+  }));
+  $('#calcBf').addEventListener('click', estBodyFat);
+})();
+
+/* =========================================================
+   音乐播放器 · 黑胶
+   ========================================================= */
+const A = { list:[], i:0, el:new Audio(), playing:false };
+A.el.preload = 'metadata';
+
+function loadFiles(files){
+  Array.from(files).forEach(f=>{
+    A.list.push({ name: f.name.replace(/\.[^.]+$/,''), url: URL.createObjectURL(f) });
+  });
+  if(!A.list.length) return;
+  if(!A.el.src || A.playing === false && A.i === 0 && !A.list[0].loaded){ }
+  playIndex(A.list.length === files.length ? 0 : A.i);
+}
+
+function playIndex(i){
+  if(!A.list.length) return;
+  A.i = (i + A.list.length) % A.list.length;
+  const t = A.list[A.i];
+  A.el.src = t.url;
+  A.el.play().then(()=>{ setPlaying(true); }).catch(()=>{ setPlaying(false); });
+  $('#trkName').textContent = t.name;
+  $('#trkSub').textContent = `${A.i+1} / ${A.list.length}`;
+  $('#sheetName').textContent = t.name;
+  $('#sheetSub').textContent = '黑胶播放中';
+}
+
+function setPlaying(on){
+  A.playing = on;
+  $('#playBtn').textContent = on ? '❚❚' : '▶';
+  $('#playBtn2').textContent = on ? '❚❚' : '▶';
+  $('#vinylMini').classList.toggle('spin', on);
+  $('#vinylBig').style.animationPlayState = on ? 'running' : 'paused';
+}
+
+function togglePlay(){
+  if(!A.list.length){ $('#fileIn').click(); return; }
+  if(A.el.paused){ A.el.play().then(()=>setPlaying(true)).catch(()=>{}); }
+  else { A.el.pause(); setPlaying(false); }
+}
+
+$('#playBtn').addEventListener('click', togglePlay);
+$('#playBtn2').addEventListener('click', togglePlay);
+$('#prevBtn').addEventListener('click', ()=> playIndex(A.i-1));
+$('#nextBtn').addEventListener('click', ()=> playIndex(A.i+1));
+$('#pickMusic').addEventListener('click', ()=> $('#fileIn').click());
+$('#fileIn').addEventListener('change', e=>{ if(e.target.files.length) loadFiles(e.target.files); e.target.value=''; });
+
+A.el.addEventListener('ended', ()=> playIndex(A.i+1));
+A.el.addEventListener('play', ()=> setPlaying(true));
+A.el.addEventListener('pause', ()=> setPlaying(false));
+A.el.addEventListener('timeupdate', ()=>{
+  const d = A.el.duration || 0, c = A.el.currentTime || 0;
+  $('#progBar').style.width = d ? (c/d*100)+'%' : '0%';
+  $('#tCur').textContent = fmt(c);
+  $('#tDur').textContent = d ? fmt(d) : '0:00';
+  A.el.volume = 1;
+});
+
+$('#vinylMini').addEventListener('click', ()=> $('#sheet').classList.add('open'));
+$('#sheetClose').addEventListener('click', ()=> $('#sheet').classList.remove('open'));
+
+/* 音量压低：训练时音乐不要盖过提示音（示意，后续可做成设置项） */
+A.el.volume = 0.9;
+
+/* 点黑胶先播（iOS 需要手势解锁音频） */
+$('#vinylMini').addEventListener('touchstart', ()=>{ try{ AC = AC || new (window.AudioContext||window.webkitAudioContext)(); AC.resume(); }catch(e){} }, {once:true});
+
+/* 屏幕常亮（支持的浏览器才生效） */
+let wakeLock = null;
+async function keepAwake(){
+  try{
+    if('wakeLock' in navigator){
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener && wakeLock.addEventListener('release', ()=>{ wakeLock = null; paintAwake(); });
+    }
+  }catch(e){}
+  paintAwake();
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ keepAwake(); keepAudioAlive(); } });
+
+/* =========================================================
+   启动
+   ========================================================= */
+renderHead();
+renderTrain();
+renderLib();
+renderStats();
+renderMe();
+buildPxRing();
+paintTimer(DB.restSec*1000);
+$$('#restChips .chip').forEach(c=>{
+  c.classList.toggle('on', +c.dataset.s === DB.restSec);
+});
+keepAwake();
+
+/* 注册 Service Worker（离线可用 + 可装到主屏） */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{ navigator.serviceWorker.register('./sw.js').catch(()=>{}); });
+}
+
+/* 数字长按连加 */
+$$('.sbtn').forEach(b=>{
+  let t=null, iv=null;
+  const go = ()=>{ const k=b.dataset.k, d=+b.dataset.d;
+    if(k==='w') DB.w = Math.max(0, +(DB.w + d*2.5).toFixed(2)); else DB.r = Math.max(1, DB.r+d);
+    save(); renderTrain();
+  };
+  const start = e=>{ e.preventDefault(); t = setTimeout(()=>{ iv = setInterval(go, 90); }, 380); };
+  const end = ()=>{ clearTimeout(t); clearInterval(iv); };
+  b.addEventListener('touchstart', start, {passive:false});
+  b.addEventListener('touchend', end);
+  b.addEventListener('touchcancel', end);
+});
+</script>
+</body>
+</html>

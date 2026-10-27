@@ -1,0 +1,100 @@
+name: Build iOS IPA
+
+# 这台机器是 Windows，编不了 iOS。所以借 GitHub 的 macOS 跑一次，
+# 产出「未签名 IPA」，你下载后用 Sideloadly / ESign 自己签名装到 iPhone。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths:
+      - "ios/**"
+      - "fitness-app/**"
+      - ".github/workflows/ios-ipa.yml"
+
+jobs:
+  build:
+    name: 编译并打包未签名 IPA
+    runs-on: macos-14
+    timeout-minutes: 40
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 环境信息
+        run: |
+          xcodebuild -version
+          sw_vers
+
+      - name: 安装 XcodeGen
+        run: brew install xcodegen
+
+      - name: 汇总网页资源到 App 包内
+        run: |
+          set -euo pipefail
+          rm -rf ios/REPS/Web
+          mkdir -p ios/REPS/Web/data ios/REPS/Web/fonts
+          cp fitness-app/index.html            ios/REPS/Web/
+          cp fitness-app/manifest.webmanifest  ios/REPS/Web/
+          cp fitness-app/icon-192.png          ios/REPS/Web/
+          cp fitness-app/icon-512.png          ios/REPS/Web/
+          cp fitness-app/data/moves.js         ios/REPS/Web/data/
+          cp fitness-app/fonts/press2p.woff2   ios/REPS/Web/fonts/
+          echo "--- Web 目录 ---"
+          find ios/REPS/Web -type f | sort
+
+      - name: 生成 1024 图标
+        run: |
+          set -euo pipefail
+          ICON_DIR=ios/REPS/Assets.xcassets/AppIcon.appiconset
+          mkdir -p "$ICON_DIR"
+          sips -z 1024 1024 fitness-app/icon-512.png --out "$ICON_DIR/icon-1024.png"
+          file "$ICON_DIR/icon-1024.png"
+
+      - name: 生成 Xcode 工程
+        run: |
+          set -euo pipefail
+          cd ios
+          xcodegen generate
+          ls -la
+
+      - name: 编译（不签名）
+        run: |
+          set -euo pipefail
+          cd ios
+          xcodebuild \
+            -project REPS.xcodeproj \
+            -scheme REPS \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ENABLE_BITCODE=NO \
+            build
+
+      - name: 打包成 IPA
+        run: |
+          set -euo pipefail
+          APP="$(find ios/build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n1)"
+          echo "APP = $APP"
+          test -n "$APP"
+          echo "--- bundle 内容 ---"
+          ls -la "$APP" | head -30
+          rm -rf out
+          mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out
+          zip -qry "$GITHUB_WORKSPACE/REPS-unsigned.ipa" Payload
+          cd ..
+          ls -lh REPS-unsigned.ipa
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: REPS-unsigned-ipa
+          path: REPS-unsigned.ipa
+          retention-days: 30
+          if-no-files-found: error

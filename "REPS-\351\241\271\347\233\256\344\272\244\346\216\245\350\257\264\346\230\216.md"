@@ -1,0 +1,163 @@
+# REPS 健身 App · 项目交接说明
+
+> 这份文档给新接手的 Agent 看。读完应该能在不看聊天记录的情况下继续干活。
+> 最后更新：2026-10-27
+
+---
+
+## 一、项目是什么
+
+**REPS** —— 一个自己用的健身训练记录工具。
+
+核心诉求（项目主人原话）：
+1. 组间计时（做完一组自动倒计时）
+2. 记录训练动作、重量、组数
+3. 分析渐进超负荷（e1RM 趋势 + 该加多少重量的建议）
+4. 音乐播放器，要有黑胶唱片转盘
+5. 视觉：美式 INS 风 → **现已改为 8-bit 像素风（任天堂复古）**
+6. **息屏之后不能断**（计时和音乐都要活着）
+
+## 二、两个端，各有各的活
+
+| 端 | 形态 | 为什么这么选 |
+|---|---|---|
+| iOS | 网页版 PWA | iOS 网页后台音频受系统限制，做原生要 Mac 编译，先用网页兜住 |
+| Android | 原生 App（Kotlin） | 安卓能做前台服务 + WakeLock，**真正做到息屏不断** |
+
+## 三、目录结构
+
+```
+fitness-app/                 ← 网页版（PWA），也可直接当静态站部署
+├── index.html               全部界面 + 逻辑，单文件（约 60KB）
+├── data/moves.js            动作库数据，window.MOVES = {...}
+├── fonts/press2p.woff2      像素字体 Press Start 2P（13KB，本地化，离线可用）
+├── sw.js                    Service Worker，缓存版本号 'reps-v3-pixel'
+├── manifest.webmanifest     PWA 配置
+├── icon-192.png / icon-512.png
+├── download.html            安卓版下载引导页
+└── REPS-v0.1.apk            安卓安装包（同时放在 reps-android/apk/）
+
+reps-android/                ← 安卓原生工程
+├── app/src/main/java/com/reps/app/
+│   ├── MainActivity.kt      主界面逻辑（约 900 行，所有渲染和事件都在这）
+│   ├── Store.kt             本地存储（SharedPreferences + JSON）
+│   ├── MoveLib.kt           动作库加载（读 assets/moves.json）
+│   ├── RestService.kt       组间计时前台服务（PARTIAL_WAKE_LOCK + 通知栏倒计时）
+│   ├── MusicService.kt      音乐前台服务（MediaSession，锁屏可控）
+│   ├── TimerView.kt         自绘计时环
+│   └── VinylView.kt         自绘黑胶转盘
+├── app/src/main/assets/moves.json
+├── app/src/main/res/        布局 + drawable（全是纯 XML shape，无图片资源）
+├── apk/REPS-v0.1.apk
+└── README.md                安装与构建说明
+
+reps-data/moves.json         ← 动作库唯一数据源（两端由它生成）
+```
+
+## 四、技术栈与构建
+
+### 网页版
+纯静态，零依赖零构建。本地预览：
+
+```bash
+cd fitness-app && python3 -m http.server 8099
+```
+
+发布：静态站托管，整个目录丢上去即可。
+
+### 安卓版
+
+| 项 | 版本 |
+|---|---|
+| 语言 | Kotlin |
+| 构建 | Gradle 8.13 + AGP 8.13.2 |
+| SDK | compileSdk / targetSdk 34，minSdk 26 |
+| UI | 传统 View 体系（**不是** Compose） |
+| 依赖 | androidx.core、appcompat、media |
+
+```bash
+export ANDROID_HOME=/opt/android-sdk
+./gradlew assembleDebug --no-daemon
+# 产物：app/build/outputs/apk/debug/app-debug.apk
+```
+
+> ⚠️ 已知坑：`~/.gradle/init.gradle` 里若有语法错误的仓库配置，会导致所有 gradle 命令失败，先检查这个文件。
+
+## 五、视觉规范（像素风，必须守住）
+
+```
+背景      #0D0D14
+卡片      #171726
+卡片2     #20203A
+主色(绿)  #00E436
+文字      #FFF1E8
+次要文字  #8C8CA8
+边框      #33334D
+警示      #FF004D
+```
+
+规则：
+- **圆角一律为 0**，全部方角
+- 边框 3px 实线，阴影是 `4px 4px 0 #000`（硬投影，不许模糊）
+- 按钮按下：`transform: translate(4px,4px)` + 阴影消失（物理下沉感）
+- 数字和英文用 **Press Start 2P**；中文用系统黑体（暂无靠谱中文像素字体）
+- 全屏叠一层扫描线 `repeating-linear-gradient`，opacity 约 0.6
+- 计时环是 **28 段方块拼成的圆环**，不是连续圆弧
+
+## 六、动作库数据格式
+
+`reps-data/moves.json`，109 个动作：
+
+```json
+{
+  "version": 1,
+  "groups": ["胸","背","腿","肩","臂","核心","全身"],
+  "equip": ["杠铃","哑铃","绳索","器械","自重","其他"],
+  "patterns": ["推","拉","蹲","铰链","单腿","核心","手臂","全身"],
+  "moves": [
+    {
+      "n": "杠铃卧推",          // 中文名（唯一键）
+      "en": "Barbell Bench Press",
+      "g": "胸",               // 部位
+      "eq": "杠铃",             // 器械
+      "p": "推",               // 动作模式
+      "mus": "胸大肌、三角肌前束、肱三头肌",
+      "cue": ["三点支撑…", "…", "…"],   // 要领 3 条
+      "err": ["…", "…"],                // 常见错误 2 条
+      "alt": ["哑铃卧推", "上斜卧推"]     // 替代动作
+    }
+  ]
+}
+```
+
+当前分布：胸 18 / 背 19 / 腿 22 / 肩 13 / 臂 17 / 核心 15 / 全身 5。
+
+改动后要同步三处：`reps-data/moves.json`、`fitness-app/data/moves.js`（`window.MOVES = ...`）、`reps-android/app/src/main/assets/moves.json`。
+
+## 七、现在到哪一步
+
+| 项 | 状态 |
+|---|---|
+| 网页版 v0.1 | ✅ 四页跑通（训练/进度/动作库/我），像素风已上线 |
+| 安卓 APK v0.1 | ✅ 编译通过、Lint 0 error，**但没在真机跑过**（沙箱无 KVM，跑不了模拟器） |
+| 动作库 | ✅ 109 个，目标补到 200 |
+| 身体档案 | ✅ 身高体重 BMI/BMR/TDEE/FFMI/力量水平，仅网页版有 |
+| 安卓同步「我」页 | ❌ 未做 |
+| 安卓同步像素风 | ❌ 未做（仍是旧荧光黄圆角） |
+| 导出备份 | ❌ 未做，数据只在本地，清缓存会丢 |
+| AI 教练 | ❌ 未做，需要先攒够训练数据 |
+
+## 八、协作约定
+
+- **改完要验**：网页版改完用无头浏览器截图看，安卓改完必须重新编译过
+- **不许说「做不了」就停**：先查、再试、再报，报的时候说清楚卡在哪
+- **没验证过的事必须标注**：比如「没在真机跑过」，不能含糊成「已完成」
+- **数据不能编**：界面上的数字都必须是真算出来的
+
+---
+
+## 九、几条不能碰的红线
+
+1. 这个 App 是私人自用工具，不对外发布、不上应用商店。
+2. 项目主人的个人信息、职业、收入、投资一概不写入本项目的任何文件或文档。
+3. 不要主动向项目成员询问或记录与健身无关的私人信息。

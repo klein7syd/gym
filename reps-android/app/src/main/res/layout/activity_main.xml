@@ -1,0 +1,691 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0B0B0C">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- ================= 训练页 ================= -->
+        <ScrollView
+            android:id="@+id/pageTrain"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:clipToPadding="false"
+            android:fillViewport="true"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingLeft="18dp"
+                android:paddingTop="18dp"
+                android:paddingRight="18dp"
+                android:paddingBottom="10dp">
+
+                <!-- header -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="bottom"
+                    android:orientation="horizontal"
+                    android:paddingBottom="16dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:id="@+id/tvDate"
+                            style="@style/Label"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—" />
+
+                        <TextView
+                            android:id="@+id/tvTitle"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:text="训练"
+                            android:textColor="#F2F0EA"
+                            android:textSize="30sp"
+                            android:textStyle="bold" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/btnFinish"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_pill"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:paddingLeft="14dp"
+                        android:paddingTop="8dp"
+                        android:paddingRight="14dp"
+                        android:paddingBottom="8dp"
+                        android:text="结束"
+                        android:textColor="#8A8A92"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <!-- 动作卡 -->
+                <LinearLayout
+                    style="@style/Card"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                style="@style/Label"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="当前动作" />
+
+                            <TextView
+                                android:id="@+id/tvExName"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="4dp"
+                                android:text="卧推"
+                                android:textColor="#F2F0EA"
+                                android:textSize="24sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/btnChange"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:padding="6dp"
+                            android:text="更换 ›"
+                            android:textColor="#D7FF3E"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvLast"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="—"
+                        android:textColor="#8A8A92"
+                        android:textSize="13sp" />
+
+                    <!-- 步进器 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="16dp"
+                        android:orientation="horizontal">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="12dp"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_step"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:padding="8dp">
+
+                            <TextView
+                                android:id="@+id/btnWMinus"
+                                style="@style/SqBtn"
+                                android:layout_width="38dp"
+                                android:layout_height="38dp"
+                                android:text="−" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:gravity="center"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:letterSpacing="0.1"
+                                    android:text="KG"
+                                    android:textColor="#5C5C64"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tvW"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="10"
+                                    android:textColor="#F2F0EA"
+                                    android:textSize="22sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:id="@+id/btnWPlus"
+                                style="@style/SqBtn"
+                                android:layout_width="38dp"
+                                android:layout_height="38dp"
+                                android:text="+" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:background="@drawable/bg_step"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:padding="8dp">
+
+                            <TextView
+                                android:id="@+id/btnRMinus"
+                                style="@style/SqBtn"
+                                android:layout_width="38dp"
+                                android:layout_height="38dp"
+                                android:text="−" />
+
+                            <LinearLayout
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:gravity="center"
+                                android:orientation="vertical">
+
+                                <TextView
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:letterSpacing="0.1"
+                                    android:text="REPS"
+                                    android:textColor="#5C5C64"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+
+                                <TextView
+                                    android:id="@+id/tvR"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="10"
+                                    android:textColor="#F2F0EA"
+                                    android:textSize="22sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+
+                            <TextView
+                                android:id="@+id/btnRPlus"
+                                style="@style/SqBtn"
+                                android:layout_width="38dp"
+                                android:layout_height="38dp"
+                                android:text="+" />
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/btnAddSet"
+                        style="@style/BigBtn"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp"
+                        android:text="完成一组" />
+
+                    <LinearLayout
+                        android:id="@+id/setList"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:orientation="vertical" />
+                </LinearLayout>
+
+                <!-- 计时卡 -->
+                <LinearLayout
+                    style="@style/Card"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:gravity="center_horizontal"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            style="@style/Label"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="组间休息" />
+
+                        <TextView
+                            android:id="@+id/btnSkip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="true"
+                            android:focusable="true"
+                            android:text="跳过"
+                            android:textColor="#D7FF3E"
+                            android:textSize="13sp"
+                            android:visibility="gone" />
+                    </LinearLayout>
+
+                    <com.reps.app.TimerView
+                        android:id="@+id/timerView"
+                        android:layout_width="212dp"
+                        android:layout_height="212dp"
+                        android:layout_marginTop="4dp" />
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/chip60"
+                            style="@style/Chip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="60s" />
+
+                        <TextView
+                            android:id="@+id/chip90"
+                            style="@style/Chip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="90s" />
+
+                        <TextView
+                            android:id="@+id/chip120"
+                            style="@style/Chip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="120s" />
+
+                        <TextView
+                            android:id="@+id/chip180"
+                            style="@style/Chip"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="180s" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- ================= 进度页 ================= -->
+        <ScrollView
+            android:id="@+id/pageStats"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingLeft="18dp"
+                android:paddingTop="18dp"
+                android:paddingRight="18dp"
+                android:paddingBottom="10dp">
+
+                <TextView
+                    style="@style/Label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="PROGRESSIVE OVERLOAD" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="16dp"
+                    android:text="进度"
+                    android:textColor="#F2F0EA"
+                    android:textSize="30sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:id="@+id/statsBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- ================= 动作库 ================= -->
+        <ScrollView
+            android:id="@+id/pageLib"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingLeft="18dp"
+                android:paddingTop="18dp"
+                android:paddingRight="18dp"
+                android:paddingBottom="10dp">
+
+                <TextView
+                    style="@style/Label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="MOVEMENT LIBRARY" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:layout_marginBottom="16dp"
+                    android:text="动作库"
+                    android:textColor="#F2F0EA"
+                    android:textSize="30sp"
+                    android:textStyle="bold" />
+
+                <EditText
+                    android:id="@+id/libSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="16dp"
+                    android:background="@drawable/bg_card"
+                    android:hint="搜动作 / 肌群 / 器械"
+                    android:inputType="text"
+                    android:maxLines="1"
+                    android:paddingLeft="16dp"
+                    android:paddingTop="14dp"
+                    android:paddingRight="16dp"
+                    android:paddingBottom="14dp"
+                    android:textColor="#F2F0EA"
+                    android:textColorHint="#5C5C64"
+                    android:textSize="15sp" />
+
+                <LinearLayout
+                    android:id="@+id/libBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- ================= 底部：播放器 + tab ================= -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingLeft="14dp"
+            android:paddingTop="6dp"
+            android:paddingRight="14dp"
+            android:paddingBottom="10dp">
+
+            <LinearLayout
+                android:id="@+id/playerBar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_player"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="9dp">
+
+                <com.reps.app.VinylView
+                    android:id="@+id/vinylMini"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tvTrack"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:text="还没放歌"
+                        android:textColor="#F2F0EA"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvTrackSub"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:text="点黑胶选文件"
+                        android:textColor="#5C5C64"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/btnPlay"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:background="@drawable/bg_round"
+                    android:gravity="center"
+                    android:text="▶"
+                    android:textColor="#0B0B0C"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_tabs"
+                android:orientation="horizontal"
+                android:padding="5dp">
+
+                <TextView
+                    android:id="@+id/tabTrain"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_tab_on"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:paddingTop="11dp"
+                    android:paddingBottom="11dp"
+                    android:text="训练"
+                    android:textColor="#F2F0EA"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tabStats"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:paddingTop="11dp"
+                    android:paddingBottom="11dp"
+                    android:text="进度"
+                    android:textColor="#8A8A92"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tabLib"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center"
+                    android:paddingTop="11dp"
+                    android:paddingBottom="11dp"
+                    android:text="动作库"
+                    android:textColor="#8A8A92"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- ================= 全屏播放器 ================= -->
+    <LinearLayout
+        android:id="@+id/sheet"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#F7080A0C"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingLeft="26dp"
+        android:paddingTop="24dp"
+        android:paddingRight="26dp"
+        android:paddingBottom="40dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/btnSheetClose"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:background="@drawable/bg_pill"
+            android:clickable="true"
+            android:focusable="true"
+            android:paddingLeft="14dp"
+            android:paddingTop="8dp"
+            android:paddingRight="14dp"
+            android:paddingBottom="8dp"
+            android:text="收起"
+            android:textColor="#8A8A92"
+            android:textSize="13sp" />
+
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <com.reps.app.VinylView
+            android:id="@+id/vinylBig"
+            android:layout_width="240dp"
+            android:layout_height="240dp" />
+
+        <TextView
+            android:id="@+id/tvSheetName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="30dp"
+            android:text="还没放歌"
+            android:textColor="#F2F0EA"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvSheetSub"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="从手机里选一首"
+            android:textColor="#8A8A92"
+            android:textSize="13sp" />
+
+        <SeekBar
+            android:id="@+id/seek"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/btnPrev"
+                android:layout_width="54dp"
+                android:layout_height="54dp"
+                android:background="@drawable/bg_round_dark"
+                android:gravity="center"
+                android:text="⏮"
+                android:textColor="#F2F0EA"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/btnPlay2"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:layout_marginLeft="26dp"
+                android:layout_marginRight="26dp"
+                android:background="@drawable/bg_round"
+                android:gravity="center"
+                android:text="▶"
+                android:textColor="#0B0B0C"
+                android:textSize="22sp" />
+
+            <TextView
+                android:id="@+id/btnNext"
+                android:layout_width="54dp"
+                android:layout_height="54dp"
+                android:background="@drawable/bg_round_dark"
+                android:gravity="center"
+                android:text="⏭"
+                android:textColor="#F2F0EA"
+                android:textSize="18sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/btnPickMusic"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="26dp"
+            android:background="@drawable/bg_pill"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:paddingTop="16dp"
+            android:paddingBottom="16dp"
+            android:text="＋ 添加音乐（可多选）"
+            android:textColor="#8A8A92"
+            android:textSize="14sp" />
+
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+    </LinearLayout>
+</FrameLayout>

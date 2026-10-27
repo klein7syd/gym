@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">REPS</string>
+    <string name="notif_channel_timer">组间计时</string>
+    <string name="notif_channel_music">音乐播放</string>
+</resources>

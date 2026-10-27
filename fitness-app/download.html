@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0B0B0C">
+<title>REPS · 下载与安装</title>
+<style>
+  :root{
+    --bg:#0B0B0C; --card:#151518; --card2:#1C1C20; --line:rgba(255,255,255,.08);
+    --fg:#F2F0EA; --mut:#8A8A93; --dim:#5C5C64; --acc:#D7FF3E;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{
+    background:var(--bg);color:var(--fg);
+    font:16px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif;
+    padding:calc(env(safe-area-inset-top) + 40px) 22px calc(env(safe-area-inset-bottom) + 48px);
+    max-width:560px;margin:0 auto;
+  }
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:34px}
+  .disc{
+    width:42px;height:42px;border-radius:50%;
+    background:radial-gradient(circle at 50% 50%,#D7FF3E 0 24%,#1a1a1d 25% 100%);
+    border:1px solid rgba(255,255,255,.12);
+  }
+  .brand .nm{font-size:15px;font-weight:800;letter-spacing:.22em}
+  h1{font-size:34px;line-height:1.15;letter-spacing:-.02em;font-weight:820;margin-bottom:10px}
+  .sub{color:var(--mut);font-size:15px;line-height:1.6;margin-bottom:30px}
+  .btn{
+    display:block;width:100%;text-align:center;text-decoration:none;
+    background:var(--acc);color:#0B0B0C;font-weight:800;font-size:17px;
+    padding:19px;border-radius:20px;letter-spacing:.02em;
+    box-shadow:0 10px 30px rgba(215,255,62,.16);
+  }
+  .btn:active{transform:scale(.985)}
+  .meta{display:flex;gap:9px;justify-content:center;margin-top:14px;flex-wrap:wrap}
+  .meta span{font-size:12px;color:var(--dim);background:var(--card);border:1px solid var(--line);
+    padding:6px 12px;border-radius:999px}
+  h2{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);
+    font-weight:700;margin:36px 0 14px}
+  ol{list-style:none;counter-reset:s}
+  ol li{
+    counter-increment:s;position:relative;padding-left:38px;margin-bottom:16px;
+    font-size:15px;line-height:1.6;color:#D8D6D0;
+  }
+  ol li::before{
+    content:counter(s);position:absolute;left:0;top:1px;
+    width:24px;height:24px;border-radius:50%;background:var(--card2);
+    display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:800;color:var(--acc);border:1px solid var(--line);
+  }
+  .card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:18px 20px}
+  .warn{background:rgba(215,255,62,.07);border:1px solid rgba(215,255,62,.22)}
+  .warn .t{font-size:13px;font-weight:800;color:var(--acc);margin-bottom:7px;letter-spacing:.04em}
+  .warn p{font-size:14px;line-height:1.65;color:#C9C7C1}
+  .foot{margin-top:44px;font-size:12px;color:#3A3A40;text-align:center;line-height:1.8}
+  a.plain{color:var(--acc);text-decoration:none;font-weight:700}
+</style>
+</head>
+<body>
+
+  <div class="brand"><div class="disc"></div><div class="nm">REPS</div></div>
+
+  <h1>装上，就能练了。</h1>
+  <p class="sub">安卓原生版 · 息屏计时不断 · 音乐后台播放<br>点下面的按钮直接下载安装包。</p>
+
+  <a class="btn" href="REPS-v0.1.apk" download="REPS-v0.1.apk">下载 REPS 安装包</a>
+  <div class="meta"><span>3.5 MB</span><span>Android 8.0+</span><span>v0.1</span></div>
+
+  <h2>安装三步</h2>
+  <ol>
+    <li>下载完成后，在通知栏或「文件管理 → 下载」里点开这个 apk 文件。</li>
+    <li>系统会提示「未知来源应用」——这是正常的，因为它不是从应用商店装的。选择<b>允许本次安装</b>。</li>
+    <li>安装完成后，桌面出现黑底荧光黄的唱片图标，点开即可。</li>
+  </ol>
+
+  <div class="card warn">
+    <div class="t">第一次打开务必开通知权限</div>
+    <p>不给通知权限，组间休息到点不会有任何提示和震动，等于白装。</p>
+  </div>
+
+  <h2>装完先验一件事</h2>
+  <div class="card">
+    <p>打开 App，随便点一次「完成一组」，然后把屏幕按灭，等 30 秒再亮屏，看计时器是不是还在走。<br><br>走了 = 息屏保活生效；停住不动 = 你告诉我，我改。</p>
+  </div>
+
+  <h2>用 iPhone？</h2>
+  <div class="card">
+    <p>iPhone 走网页版，不用装包：<br><a class="plain" id="webLink" href="./">打开 REPS 网页版 →</a><br><br>打开后点 Safari 的分享按钮，选「添加到主屏幕」，桌面就会有图标，点开全屏无地址栏。</p>
+  </div>
+
+<script>
+  /* 保留分享码，别让网页版链接丢掉访问凭据 */
+  (function(){
+    var a = document.getElementById('webLink');
+    if(a) a.href = './' + location.search;
+  })();
+</script>
+
+  <p class="foot">REPS v0.1 · debug 签名自建包<br>由 F 的工作台构建</p>
+
+</body>
+</html>
