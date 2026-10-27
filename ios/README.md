@@ -7,6 +7,21 @@
 
 ---
 
+## 当前状态（2026-10-28）
+
+| 项 | 状态 |
+|---|---|
+| 云端编译 | ✅ 跑通（GitHub Actions / macos-14 / Xcode 15.4，约 5 分钟） |
+| 产物 | ✅ `dist/REPS-unsigned.ipa`（148 KB，arm64） |
+| 包内容 | ✅ `Web/index.html` + `data/moves.js` + `fonts/press2p.woff2` + 图标都在 |
+| Info.plist | ✅ `com.klein7syd.reps`，iOS 15.0+，`UIBackgroundModes=audio`，仅竖屏 |
+| 签名安装 | ⬜ 还没在你手机上跑过，需要你用 Sideloadly 签 |
+
+**没验证过的部分**：真机行为（白屏 / 后台音频 / 文件选择器 / localStorage 是否真持久）。
+下面每一步都是能编译、能出包，但运行时还没人试过。
+
+---
+
 ## 为什么是「壳 + 云端编译」
 
 | 约束 | 解法 |
@@ -106,6 +121,37 @@ Apple Music / 流媒体受版权保护，选不了。做法：
 选完的歌是临时引用，**每次重开 App 要重新选一遍** —— 这是网页版的老问题，还没修。
 
 ---
+
+## 改完代码怎么推
+
+这台机器（Windows 那台）到 `github.com:443` 的 git 传输被代理挡着，
+`git push` 会报 `CONNECT tunnel failed, response 502`。但 `api.github.com` 是通的，
+所以走 REST API：
+
+```bash
+cd C:/Users/32077/WorkBuddy/gym
+git add -A && git commit -m "改了啥"
+python tools/push-via-api.py "改了啥"       # 用已保存的 github 凭据，无需额外配置
+```
+
+产物下载也走 API：
+
+```bash
+python tools/download-ipa.py                # 存到 dist/REPS-unsigned.ipa
+```
+
+> 注意：API 建出来的 tree sha 和本地 git 算的不一样，所以远端 commit sha 与本地不同（内容一致）。
+> 有网的时候执行 `git fetch origin && git reset --hard origin/main` 就能把本地历史对齐。
+
+## 踩过的坑（都已在配置里绕开）
+
+1. **XcodeGen 默认生成 Xcode 16 的工程格式（objectVersion 77）**，
+   macos-14 上的 Xcode 15.4 直接报 `future Xcode project file format (77)`。
+   → `project.yml` 里钉死 `projectFormat: xcode15_0`。
+2. **`String.split(separator:)` 的 separator 只能是 Character**，
+   拿 `"\r\n"` 去切会编译失败 → 换成 `components(separatedBy:)`。
+3. **`@main` 在 UIApplicationDelegate 上有版本坑** → 用 `@UIApplicationMain`，稳。
+4. **空仓库不能直接调 Git Data API 建 blob**（409），得先用 Contents API 落一个文件。
 
 ## 常见问题
 

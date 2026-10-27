@@ -156,7 +156,59 @@ export ANDROID_HOME=/opt/android-sdk
 
 ---
 
-## 九、几条不能碰的红线
+## 九、iOS 装成 App 的形式（2026-10-28 新增）
+
+需求变了：主人只有 Windows + iPhone，要一个能装到桌面上的 **IPA**，自己签名。
+
+做法：**WKWebView 原生壳 + GitHub Actions 云端编译**（本机没有 Mac，编不了 iOS）。
+
+```
+ios/                          ← XcodeGen 工程，不手写 .xcodeproj
+├── project.yml               projectFormat 必须钉 xcode15_0（见下）
+├── REPS/
+│   ├── AppDelegate.swift     AVAudioSession.playback + UIBackgroundModes audio
+│   ├── WebViewController.swift  WKWebView + WKUIDelegate（网页的 confirm 靠它）
+│   ├── LocalWebServer.swift  Network.framework 静态 HTTP 服务，端口 8787
+│   ├── Info.plist            com.klein7syd.reps / iOS 15+ / 竖屏 / 后台音频
+│   └── Web/                  ← CI 运行时把 fitness-app 拷进来，不入库
+tools/push-via-api.py         本机 git 被代理挡时用 REST API 推代码
+tools/download-ipa.py         从 Actions 拉最新产物到 dist/
+.github/workflows/ios-ipa.yml macos-14 上编译未签名 IPA
+```
+
+两个关键设计：
+
+1. **不用 `file://` 直开网页**。WKWebView 里 file:// 源的 localStorage 不可靠，
+   而训练记录全在 localStorage。改成内置 HTTP 服务（`127.0.0.1:8787`），
+   origin 固定，存储行为和 Safari 一致。**端口不能改，改了等于换数据库。**
+2. **AVAudioSession 用 playback 类别 + Info.plist 声明 audio 后台模式**。
+   这是比 PWA 强的地方：锁屏后进程不被挂起，音乐和计时能继续跑。
+
+现状：
+
+| 项 | 状态 |
+|---|---|
+| Actions 编译 | ✅ 跑通，产物 `dist/REPS-unsigned.ipa`（148KB，arm64） |
+| 包内容 / Info.plist | ✅ 已核对（Web 资源齐全、bundle id、后台音频） |
+| 真机运行 | ❌ **没跑过**（无 iPhone、无 Mac）。白屏/后台音频/文件选择器都待验 |
+| 签名安装 | ⬜ 主人用 Sideloadly + 免费 Apple ID 自己签，7 天要重签 |
+
+### 本机推代码的特殊姿势
+
+`github.com:443` 的 git 协议被代理挡（CONNECT 502），`api.github.com` 通。
+所以用 `tools/push-via-api.py` 走 Git Data API 推，用 `tools/download-ipa.py` 拉产物。
+代价：远端 tree sha 与本地不同 → **远端 commit sha 与本地不一致**（内容一致），
+有网时 `git fetch origin && git reset --hard origin/main` 可对齐。
+
+### 踩过的坑
+
+- XcodeGen 默认 `xcode16_0` 格式（objectVersion 77），macos-14 的 Xcode 15.4 打不开 → 钉 `xcode15_0`
+- 空仓库调 Git Data API 建 blob 返回 409，必须先用 Contents API 落一个文件
+- `String.split(separator:)` 只吃 Character，`"\r\n"` 会编译失败
+
+---
+
+## 十、几条不能碰的红线
 
 1. 这个 App 是私人自用工具，不对外发布、不上应用商店。
 2. 项目主人的个人信息、职业、收入、投资一概不写入本项目的任何文件或文档。
