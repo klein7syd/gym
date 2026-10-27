@@ -1,0 +1,22 @@
+# 编译产物 / 临时文件
+ios/build/
+ios/REPS.xcodeproj/
+ios/REPS/Web/
+ios/REPS/Assets.xcassets/AppIcon.appiconset/icon-1024.png
+out/
+*.ipa
+*.xcarchive
+*.dSYM
+
+# 本地预览截图
+.preview/
+
+# 工具与编辑器
+node_modules/
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# WorkBuddy 工作区
+.workbuddy/
