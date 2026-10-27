@@ -144,7 +144,7 @@ def main():
         api("POST", f"/repos/{OWNER}/{REPO}/git/refs",
             {"ref": f"refs/heads/{BRANCH}", "sha": commit["sha"]})
 
-    subprocess.run(["git", "update-ref", f"refs/remotes/origin/{BRANCH}", commit["sha"]], check=True)
+    subprocess.run(["git", "update-ref", f"refs/remotes/origin/{BRANCH}", commit["sha"]], check=False)
     print(f"已推送 -> https://github.com/{OWNER}/{REPO}/commit/{commit['sha']}")
 
 

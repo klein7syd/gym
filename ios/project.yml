@@ -2,6 +2,9 @@ name: REPS
 
 options:
   bundleIdPrefix: com.klein7syd
+  # 钉死工程格式：XcodeGen 默认 xcode16_0（objectVersion 77），
+  # macOS-14 runner 上的 Xcode 15.4 打不开，会报 "future Xcode project file format (77)"
+  projectFormat: xcode15_0
   deploymentTarget:
     iOS: "15.0"
   createIntermediateGroups: true
