@@ -6,7 +6,7 @@ options:
   # macOS-14 runner 上的 Xcode 15.4 打不开，会报 "future Xcode project file format (77)"
   projectFormat: xcode15_0
   deploymentTarget:
-    iOS: "15.0"
+    iOS: "16.0"
   createIntermediateGroups: true
   groupSortPosition: top
   generateEmptyDirectories: false
@@ -35,8 +35,8 @@ targets:
         INFOPLIST_FILE: REPS/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
-        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
-        MARKETING_VERSION: "2.0.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        MARKETING_VERSION: "3.0.0"
         CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Manual

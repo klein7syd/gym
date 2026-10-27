@@ -68,6 +68,16 @@ struct Track: Codable, Identifiable, Equatable {
     }
 }
 
+// MARK: - 身体数据历史（体重 / 体脂曲线）
+
+struct BodyLogEntry: Codable, Identifiable, Equatable {
+    var id: UUID = UUID()
+    var date: Date
+    var weight: Double?      // kg
+    var bodyFat: Double?     // %
+    var leanMass: Double?    // kg
+}
+
 // MARK: - 持久化根对象
 
 struct PersistedState: Codable {
@@ -79,6 +89,27 @@ struct PersistedState: Codable {
     var profile: BodyProfile = BodyProfile()
     var playlist: [Track] = []
     var lastTrackIndex: Int = 0
+    var bodyLog: [BodyLogEntry] = []
+    /// 第一次训练日期，作为「健身第几天」的起点
+    var startDate: Date? = nil
+
+    init() {}
+
+    // 手写解码：旧版本备份里没有的字段一律给默认值，不做硬性要求，
+    // 这样 1.x 导出的 backup 也能正常恢复。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sessions = (try? c.decode([Session].self, forKey: .sessions)) ?? []
+        current = try? c.decodeIfPresent(ActiveSession.self, forKey: .current)
+        restSeconds = (try? c.decode(Int.self, forKey: .restSeconds)) ?? 120
+        lastWeight = (try? c.decode(Double.self, forKey: .lastWeight)) ?? 20
+        lastReps = (try? c.decode(Int.self, forKey: .lastReps)) ?? 10
+        profile = (try? c.decode(BodyProfile.self, forKey: .profile)) ?? BodyProfile()
+        playlist = (try? c.decode([Track].self, forKey: .playlist)) ?? []
+        lastTrackIndex = (try? c.decode(Int.self, forKey: .lastTrackIndex)) ?? 0
+        bodyLog = (try? c.decode([BodyLogEntry].self, forKey: .bodyLog)) ?? []
+        startDate = try? c.decodeIfPresent(Date.self, forKey: .startDate)
+    }
 }
 
 // MARK: - 动作库（bundle 内 moves.json）

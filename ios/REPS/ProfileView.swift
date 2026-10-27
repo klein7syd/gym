@@ -1,8 +1,15 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct ProfileView: View {
     @ObservedObject var store = Store.shared
+
+    private enum Field: Hashable {
+        case height, weight, age, neck, waist, hip, bodyFat, bench, squat, dead
+    }
+
+    @FocusState private var focused: Field?
 
     @State private var showExporter = false
     @State private var showImporter = false
@@ -10,19 +17,38 @@ struct ProfileView: View {
     @State private var toast: String?
 
     var body: some View {
-        NavigationView {
-            Form {
-                basicSection
-                if let m = store.bodyMetrics {
-                    bodySection(m)
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    basicCard
+                    if let m = store.bodyMetrics {
+                        metricsCard(m)
+                    }
+                    circumferenceCard
+                    strengthCard
+                    settingsCard
+                    dataCard
+                    aboutCard
                 }
-                circumferenceSection
-                strengthSection
-                settingsSection
-                dataSection
-                aboutSection
+                .padding(.horizontal, 20)
+                .padding(.bottom, 118)
             }
+            .scrollDismissesKeyboard(.interactively)
+            .background(
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { hideKeyboard() }
+            )
             .navigationTitle("我的")
+            .toolbar {
+                if focused != nil {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("收起") { hideKeyboard() }
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                }
+                KeyboardDoneBar()
+            }
             .sheet(isPresented: $showExporter) {
                 if let url = writeExportFile() {
                     ShareSheet(items: [url])
@@ -34,14 +60,14 @@ struct ProfileView: View {
                     let accessing = url.startAccessingSecurityScopedResource()
                     defer { if accessing { url.stopAccessingSecurityScopedResource() } }
                     guard let data = try? Data(contentsOf: url) else {
-                        toast = "读不到这个文件"
+                        showToast("读不到这个文件")
                         return
                     }
                     do {
                         let n = try store.importJSON(data)
-                        toast = "已导入 \(n) 次训练记录"
+                        showToast("已导入 \(n) 次训练记录")
                     } catch {
-                        toast = "文件格式不对，不是 REPS 的备份"
+                        showToast("文件格式不对，不是 REPS 的备份")
                     }
                 }
             }
@@ -49,216 +75,374 @@ struct ProfileView: View {
                 Button("全部清空", role: .destructive) { store.eraseAll() }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text("训练历史、身体档案、歌单都会被删除。建议先导出备份。")
+                Text("训练历史、身体档案、体重曲线、歌单都会被删除。建议先导出备份。")
             }
             .overlay(alignment: .bottom) {
                 if let t = toast {
                     Text(t)
-                        .font(.subheadline)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 12)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(24)
-                        .padding(.bottom, 24)
-                        .onAppear {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { toast = nil }
-                        }
+                        .font(.system(size: 13, weight: .medium))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .glassInner(cornerRadius: 18)
+                        .padding(.bottom, 118)
+                        .transition(.opacity)
                 }
             }
         }
-        .navigationViewStyle(.stack)
+    }
+
+    private static let sexOptions: [(String, String)] = [("m", "男"), ("f", "女")]
+
+    private func hideKeyboard() {
+        focused = nil
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
+    }
+
+    private func showToast(_ text: String) {
+        withAnimation { toast = text }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) {
+            withAnimation { toast = nil }
+        }
     }
 
     // MARK: - 基本信息
 
-    private var basicSection: some View {
-        Section(header: Text("基本信息")) {
-            Picker("性别", selection: Binding(get: { store.profile.sex },
-                                              set: { var p = store.profile; p.sex = $0; store.profile = p })) {
-                Text("男").tag("m")
-                Text("女").tag("f")
-            }
-            .pickerStyle(.segmented)
+    private var basicCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("基本信息")
+                .font(.system(size: 15, weight: .semibold))
 
-            numberRow(title: "身高", unit: "cm",
-                      value: Binding(get: { store.profile.height },
-                                     set: { var p = store.profile; p.height = $0; store.profile = p }))
-            numberRow(title: "体重", unit: "kg",
-                      value: Binding(get: { store.profile.weight },
-                                     set: { var p = store.profile; p.weight = $0; store.profile = p }))
-            intRow(title: "年龄", unit: "岁",
-                   value: Binding(get: { store.profile.age },
-                                  set: { var p = store.profile; p.age = $0; store.profile = p }))
+            HStack(spacing: 6) {
+                ForEach(Self.sexOptions, id: \.0) { item in
+                    Button {
+                        var p = store.profile
+                        p.sex = item.0
+                        store.profile = p
+                    } label: {
+                        Text(item.1)
+                            .font(.system(size: 13, weight: store.profile.sex == item.0 ? .semibold : .regular))
+                            .foregroundColor(store.profile.sex == item.0 ? .primary : .secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background {
+                                if store.profile.sex == item.0 {
+                                    Capsule().fill(.ultraThinMaterial)
+                                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.45), lineWidth: 0.7))
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(4)
+            .glassInner(cornerRadius: 22)
+
+            inputRow("身高", unit: "cm", field: .height,
+                     value: Binding(get: { store.profile.height }, set: { v in
+                         var p = store.profile; p.height = v; store.profile = p
+                     }))
+            GlassDivider()
+            inputRow("体重", unit: "kg", field: .weight,
+                     value: Binding(get: { store.profile.weight }, set: { v in
+                         var p = store.profile; p.weight = v; store.profile = p
+                         if let w = v { store.logBody(weight: w, bodyFat: p.bodyFat) }
+                     }))
+            GlassDivider()
+            intRow("年龄", unit: "岁", field: .age,
+                   value: Binding(get: { store.profile.age }, set: { v in
+                       var p = store.profile; p.age = v; store.profile = p
+                   }))
+            GlassDivider()
+            inputRow("体脂率", unit: "%", field: .bodyFat,
+                     value: Binding(get: { store.profile.bodyFat }, set: { v in
+                         var p = store.profile; p.bodyFat = v; store.profile = p
+                         if let bf = v { store.logBody(weight: p.weight, bodyFat: bf) }
+                     }))
+
+            Text("体重和体脂每改一次，会按当天记录一个点，成长页的曲线就来自这里。")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(16)
+        .glass()
     }
 
     // MARK: - 身体指标
 
-    private func bodySection(_ m: Store.BodyMetrics) -> some View {
-        Section(header: Text("身体指标"), footer: Text(m.advice)) {
-            MetricRow(label: "BMI", value: String(format: "%.1f", m.bmi), note: m.bmiTag)
-            MetricRow(label: "理想体重区间", value: "\(Int(m.idealLow))-\(Int(m.idealHigh))", unit: "kg")
-            MetricRow(label: "基础代谢 BMR", value: "\(Int(m.bmr))", unit: "kcal")
-            MetricRow(label: "每日消耗 TDEE", value: "\(Int(m.tdee))", unit: "kcal")
+    private func metricsCard(_ m: Store.BodyMetrics) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("身体指标")
+                .font(.system(size: 15, weight: .semibold))
+
+            GlassRow(title: "BMI", value: String(format: "%.1f", m.bmi), note: m.bmiTag)
+            GlassDivider()
+            GlassRow(title: "理想体重区间", value: "\(Int(m.idealLow))-\(Int(m.idealHigh))", unit: "kg")
+            GlassDivider()
+            GlassRow(title: "基础代谢 BMR", value: "\(Int(m.bmr))", unit: "kcal")
+            GlassDivider()
+            GlassRow(title: "每日消耗 TDEE", value: "\(Int(m.tdee))", unit: "kcal")
             if let lean = m.leanMass, let ffmi = m.ffmi {
-                MetricRow(label: "去脂体重", value: String(format: "%.1f", lean), unit: "kg")
-                MetricRow(label: "FFMI", value: String(format: "%.1f", ffmi), note: m.ffmiTag)
+                GlassDivider()
+                GlassRow(title: "去脂体重", value: String(format: "%.1f", lean), unit: "kg")
+                GlassDivider()
+                GlassRow(title: "FFMI", value: String(format: "%.1f", ffmi), note: m.ffmiTag)
             }
             if let lose = m.fatToLose, lose > 0 {
-                MetricRow(label: "减到 15% 体脂需减", value: String(format: "%.1f", lose), unit: "kg")
+                GlassDivider()
+                GlassRow(title: "减到 15% 体脂需减", value: String(format: "%.1f", lose), unit: "kg")
             }
+
+            Text(m.advice)
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2)
         }
+        .padding(16)
+        .glass()
     }
 
     // MARK: - 围度估体脂
 
-    private var circumferenceSection: some View {
-        Section(header: Text("围度估体脂"),
-                footer: Text("美国海军公式，误差约 ±3%。量的时候软尺贴皮肤、不要勒紧，早上空腹量最稳定。")) {
-            numberRow(title: "颈围", unit: "cm",
-                      value: Binding(get: { store.profile.neck },
-                                     set: { var p = store.profile; p.neck = $0; store.profile = p }))
-            numberRow(title: "腰围", unit: "cm",
-                      value: Binding(get: { store.profile.waist },
-                                     set: { var p = store.profile; p.waist = $0; store.profile = p }))
+    private var circumferenceCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("围度估体脂")
+                .font(.system(size: 15, weight: .semibold))
+
+            inputRow("颈围", unit: "cm", field: .neck,
+                     value: Binding(get: { store.profile.neck }, set: { v in
+                         var p = store.profile; p.neck = v; store.profile = p
+                     }))
+            GlassDivider()
+            inputRow("腰围", unit: "cm", field: .waist,
+                     value: Binding(get: { store.profile.waist }, set: { v in
+                         var p = store.profile; p.waist = v; store.profile = p
+                     }))
             if store.profile.sex == "f" {
-                numberRow(title: "臀围", unit: "cm",
-                          value: Binding(get: { store.profile.hip },
-                                         set: { var p = store.profile; p.hip = $0; store.profile = p }))
+                GlassDivider()
+                inputRow("臀围", unit: "cm", field: .hip,
+                         value: Binding(get: { store.profile.hip }, set: { v in
+                             var p = store.profile; p.hip = v; store.profile = p
+                         }))
             }
-            numberRow(title: "体脂率", unit: "%",
-                      value: Binding(get: { store.profile.bodyFat },
-                                     set: { var p = store.profile; p.bodyFat = $0; store.profile = p }))
+
             Button {
                 if let bf = store.estimateBodyFat() {
-                    toast = "估算体脂 \(String(format: "%.1f", bf))%"
+                    store.logBody(weight: store.profile.weight, bodyFat: bf)
+                    showToast("估算体脂 \(String(format: "%.1f", bf))%")
                 } else {
-                    toast = "围度填得不完整或数值不合理"
+                    showToast("围度填得不完整或数值不合理")
                 }
             } label: {
                 Label("用围度计算体脂", systemImage: "function")
             }
+            .buttonStyle(GlassButtonStyle())
+            .padding(.top, 4)
+
+            Text("美国海军公式，误差约 ±3%。软尺贴皮肤不要勒紧，早上空腹量最稳。")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(16)
+        .glass()
     }
 
     // MARK: - 力量水平
 
-    private var strengthSection: some View {
-        Section(header: Text("力量水平"),
-                footer: Text("填 1RM（一次能举起的最大重量）。倍数比绝对重量更公平——体重变了要重新比。男性中级线：卧推 1× 体重、深蹲 1.5×、硬拉 1.75×。")) {
-            numberRow(title: "卧推 1RM", unit: "kg",
-                      value: Binding(get: { store.profile.bench },
-                                     set: { var p = store.profile; p.bench = $0; store.profile = p }))
-            numberRow(title: "深蹲 1RM", unit: "kg",
-                      value: Binding(get: { store.profile.squat },
-                                     set: { var p = store.profile; p.squat = $0; store.profile = p }))
-            numberRow(title: "硬拉 1RM", unit: "kg",
-                      value: Binding(get: { store.profile.dead },
-                                     set: { var p = store.profile; p.dead = $0; store.profile = p }))
+    private var strengthCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("力量水平")
+                .font(.system(size: 15, weight: .semibold))
+
+            inputRow("卧推 1RM", unit: "kg", field: .bench,
+                     value: Binding(get: { store.profile.bench }, set: { v in
+                         var p = store.profile; p.bench = v; store.profile = p
+                     }))
+            GlassDivider()
+            inputRow("深蹲 1RM", unit: "kg", field: .squat,
+                     value: Binding(get: { store.profile.squat }, set: { v in
+                         var p = store.profile; p.squat = v; store.profile = p
+                     }))
+            GlassDivider()
+            inputRow("硬拉 1RM", unit: "kg", field: .dead,
+                     value: Binding(get: { store.profile.dead }, set: { v in
+                         var p = store.profile; p.dead = v; store.profile = p
+                     }))
+
             ForEach(store.liftLevels) { l in
-                MetricRow(label: l.name,
-                          value: "\(String(format: "%.2f", l.ratio))×",
-                          note: l.level)
+                GlassDivider()
+                GlassRow(title: l.name,
+                         subtitle: "\(Int(l.weight)) kg",
+                         value: String(format: "%.2f", l.ratio),
+                         unit: "× 体重",
+                         note: l.level)
             }
+
+            Text("倍数比绝对重量更公平，体重变了要重新比。男性中级线：卧推 1× 体重、深蹲 1.5×、硬拉 1.75×。")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(16)
+        .glass()
     }
 
     // MARK: - 设置
 
-    private var settingsSection: some View {
-        Section(header: Text("训练设置"), footer: Text("完成一组后会自动按这个时长开始休息计时，到点响铃并震动；锁屏时由系统通知提醒。")) {
-            Picker("默认组间休息", selection: Binding(get: { store.restSeconds },
-                                                      set: { store.restSeconds = $0 })) {
-                Text("60 秒").tag(60)
-                Text("90 秒").tag(90)
-                Text("120 秒").tag(120)
-                Text("180 秒").tag(180)
-                Text("240 秒").tag(240)
+    private var settingsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("训练设置")
+                .font(.system(size: 15, weight: .semibold))
+
+            HStack(spacing: 6) {
+                ForEach([60, 90, 120, 180], id: \.self) { s in
+                    Button {
+                        store.restSeconds = s
+                    } label: {
+                        Text("\(s)s")
+                            .font(.system(size: 13, weight: store.restSeconds == s ? .semibold : .regular))
+                            .foregroundColor(store.restSeconds == s ? .primary : .secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background {
+                                if store.restSeconds == s {
+                                    Capsule().fill(.ultraThinMaterial)
+                                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.45), lineWidth: 0.7))
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                }
             }
+            .padding(4)
+            .glassInner(cornerRadius: 22)
+
+            Text("完成一组后按这个时长开始休息。到点响铃震动，锁屏时由系统通知提醒。")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(16)
+        .glass()
     }
 
     // MARK: - 数据
 
-    private var dataSection: some View {
-        Section(header: Text("数据"),
-                footer: Text("所有数据只存在这台手机上，不上传任何服务器。换手机或重装前请先导出备份。")) {
+    private var dataCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("数据")
+                .font(.system(size: 15, weight: .semibold))
+
             Button {
                 showExporter = true
             } label: {
                 Label("导出备份（JSON）", systemImage: "square.and.arrow.up")
             }
+            .buttonStyle(GlassButtonStyle())
+
             Button {
                 showImporter = true
             } label: {
                 Label("从备份恢复", systemImage: "square.and.arrow.down")
             }
-            HStack {
-                Text("历史训练")
-                Spacer()
-                Text("\(store.sessions.count) 次").foregroundColor(.secondary)
-            }
-            HStack {
-                Text("累计容量")
-                Spacer()
-                Text("\(Int(store.totalVolume)) kg").foregroundColor(.secondary)
-            }
+            .buttonStyle(GlassButtonStyle())
+
+            GlassDivider()
+            GlassRow(title: "历史训练", value: "\(store.sessions.count)", unit: "次")
+            GlassDivider()
+            GlassRow(title: "累计容量", value: "\(Int(store.totalVolume))", unit: "kg")
+            GlassDivider()
+            GlassRow(title: "体重记录", value: "\(store.bodyLog.count)", unit: "条")
+
             Button(role: .destructive) {
                 showEraseAlert = true
             } label: {
                 Text("清空全部数据")
+                    .foregroundColor(.red)
             }
+            .buttonStyle(GlassButtonStyle())
+            .padding(.top, 2)
+
+            Text("数据只存在这台手机上，不上传任何服务器。换手机或重装前先导出备份。")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(16)
+        .glass()
     }
 
-    private var aboutSection: some View {
-        Section {
-            HStack {
-                Text("版本")
-                Spacer()
-                Text("2.0.0 · SwiftUI 原生").foregroundColor(.secondary)
-            }
-            HStack {
-                Text("动作库")
-                Spacer()
-                Text("\(store.library.moves.count) 个动作").foregroundColor(.secondary)
-            }
+    private var aboutCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            GlassRow(title: "版本", value: "3.0.0")
+            GlassDivider()
+            GlassRow(title: "界面", value: "Liquid Glass")
+            GlassDivider()
+            GlassRow(title: "动作库", value: "\(store.library.moves.count)", unit: "个")
         }
+        .padding(16)
+        .glass()
     }
 
-    // MARK: - 工具
+    // MARK: - 输入行
 
-    private func numberRow(title: String, unit: String, value: Binding<Double?>) -> some View {
-        HStack {
+    private func inputRow(_ title: String, unit: String, field: Field,
+                          value: Binding<Double?>) -> some View {
+        HStack(spacing: 8) {
             Text(title)
+                .font(.system(size: 15))
             Spacer()
-            TextField("—", text: Binding(get: {
-                guard let v = value.wrappedValue else { return "" }
-                return v.truncatingRemainder(dividingBy: 1) == 0 ? String(format: "%.0f", v) : String(format: "%.1f", v)
-            }, set: { text in
-                value.wrappedValue = Double(text.replacingOccurrences(of: ",", with: "."))
-            }))
-            .keyboardType(.decimalPad)
-            .multilineTextAlignment(.trailing)
-            .frame(width: 90)
-            Text(unit).foregroundColor(.secondary)
+            TextField("—", text: Binding(
+                get: { doubleText(value.wrappedValue) },
+                set: { text in
+                    let clean = text
+                        .replacingOccurrences(of: "，", with: ".")
+                        .replacingOccurrences(of: ",", with: ".")
+                    value.wrappedValue = clean.isEmpty ? nil : Double(clean)
+                }))
+                .font(.system(size: 16, weight: .medium, design: .rounded))
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 82)
+                .focused($focused, equals: field)
+            Text(unit)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .frame(width: 24, alignment: .leading)
         }
+        .padding(.vertical, 5)
     }
 
-    private func intRow(title: String, unit: String, value: Binding<Int?>) -> some View {
-        HStack {
+    private func intRow(_ title: String, unit: String, field: Field,
+                        value: Binding<Int?>) -> some View {
+        HStack(spacing: 8) {
             Text(title)
+                .font(.system(size: 15))
             Spacer()
-            TextField("—", text: Binding(get: {
-                value.wrappedValue.map { String($0) } ?? ""
-            }, set: { text in
-                value.wrappedValue = Int(text)
-            }))
-            .keyboardType(.numberPad)
-            .multilineTextAlignment(.trailing)
-            .frame(width: 90)
-            Text(unit).foregroundColor(.secondary)
+            TextField("—", text: Binding(
+                get: { value.wrappedValue.map { String($0) } ?? "" },
+                set: { text in value.wrappedValue = Int(text) }))
+                .font(.system(size: 16, weight: .medium, design: .rounded))
+                .keyboardType(.numberPad)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 82)
+                .focused($focused, equals: field)
+            Text(unit)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .frame(width: 24, alignment: .leading)
         }
+        .padding(.vertical, 5)
+    }
+
+    private func doubleText(_ v: Double?) -> String {
+        guard let v = v else { return "" }
+        return v.truncatingRemainder(dividingBy: 1) == 0
+            ? String(format: "%.0f", v)
+            : String(format: "%.1f", v)
     }
 
     private func writeExportFile() -> URL? {

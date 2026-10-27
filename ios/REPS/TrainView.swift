@@ -11,7 +11,7 @@ struct TrainView: View {
     private let restOptions = [60, 90, 120, 180]
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
                     exerciseCard
@@ -33,21 +33,17 @@ struct TrainView: View {
 
                     Button(action: completeSet) {
                         Text("完成一组")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 54)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
+                    .buttonStyle(GlassButtonStyle(prominent: true))
 
                     setListCard
 
                     sessionFooter
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 32)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 118)
             }
-            .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
+            .background(Color.clear)
             .navigationTitle("训练")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -65,7 +61,6 @@ struct TrainView: View {
                 store.ensureSession()
             }
         }
-        .navigationViewStyle(.stack)
     }
 
     // MARK: - 当前动作
@@ -133,45 +128,60 @@ struct TrainView: View {
 
     private var restCard: some View {
         SectionCard {
-            HStack(spacing: 20) {
+            HStack(spacing: 16) {
                 RestRing(progress: rest.progress, text: rest.remainingText)
-                    .scaleEffect(0.66)
-                    .frame(width: 126, height: 126)
+                    .scaleEffect(0.62)
+                    .frame(width: 118, height: 118)
+
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: 6) {
                         ForEach(restOptions, id: \.self) { s in
                             Button {
                                 rest.start(seconds: s)
                                 store.restSeconds = s
                             } label: {
                                 Text("\(s)")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .frame(width: 42, height: 30)
-                                    .background(s == rest.total ? Color.accentColor : Color(UIColor.tertiarySystemFill))
-                                    .foregroundColor(s == rest.total ? .white : .primary)
-                                    .cornerRadius(8)
+                                    .font(.system(size: 12, weight: s == rest.total ? .semibold : .regular))
+                                    .foregroundColor(s == rest.total ? .white : .secondary)
+                                    .frame(width: 38, height: 28)
+                                    .background(
+                                        Capsule().fill(s == rest.total
+                                                       ? Color.accentColor
+                                                       : Color.primary.opacity(0.06))
+                                    )
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(ScaleButtonStyle())
                         }
                     }
-                    HStack(spacing: 12) {
+
+                    HStack(spacing: 8) {
                         Button {
                             rest.add(seconds: 30)
                         } label: {
-                            Label("加 30 秒", systemImage: "plus")
-                                .font(.subheadline)
+                            Text("+30 秒")
+                                .font(.system(size: 12, weight: .medium))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Capsule().fill(Color.primary.opacity(0.06)))
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(ScaleButtonStyle())
 
-                        Button(role: .destructive) {
+                        Button {
                             rest.skip()
                         } label: {
                             Text("跳过")
-                                .font(.subheadline)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Capsule().fill(Color.primary.opacity(0.06)))
                         }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(ScaleButtonStyle())
                     }
+
+                    Text("锁屏后到点由系统通知提醒")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
                 }
             }
         }
@@ -230,17 +240,16 @@ struct TrainView: View {
                 showFinishAlert = true
             } label: {
                 Text("结束训练并保存")
-                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
+            .buttonStyle(GlassButtonStyle())
 
             if store.current != nil {
                 Button(role: .destructive) {
                     showDiscardAlert = true
                 } label: {
                     Text("放弃本次训练")
-                        .font(.caption)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
                 }
             }
         }
@@ -303,7 +312,7 @@ struct ExercisePickerView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
                 Section {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -396,7 +405,7 @@ struct MoveDetailView: View {
     @ObservedObject var store = Store.shared
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
                 Section {
                     VStack(alignment: .leading, spacing: 6) {

@@ -40,5 +40,13 @@
 	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>用于搜索并播放 Apple Music 中的歌曲。</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>music</string>
+		<string>orpheus</string>
+		<string>neteasemusic</string>
+	</array>
 </dict>
 </plist>

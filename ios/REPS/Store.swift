@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SwiftUI
 
 /// 全局数据层：所有训练、档案、歌单数据都经这里读写。
 /// 持久化为 Documents/reps.json，纯本地、离线可用。
@@ -155,6 +156,9 @@ final class Store: ObservableObject {
         }
         let session = Session(date: c.date, exercises: done)
         state.sessions.append(session)
+        if state.startDate == nil {
+            state.startDate = Calendar.current.startOfDay(for: c.date)
+        }
         state.current = nil
         writeNow()
         return session
@@ -370,6 +374,104 @@ final class Store: ObservableObject {
     var lastTrackIndex: Int {
         get { state.lastTrackIndex }
         set { state.lastTrackIndex = newValue; save() }
+    }
+
+    // MARK: - 健身天数 / 身体数据曲线
+
+    /// 健身计划的第几天起点。纯计算，不在渲染期写状态。
+    var startDate: Date {
+        if let s = state.startDate { return s }
+        if let first = state.sessions.map({ $0.date }).min() {
+            return Calendar.current.startOfDay(for: first)
+        }
+        return Calendar.current.startOfDay(for: Date())
+    }
+
+    /// 距起点第几天（第 1 天 = 起点当天）
+    func fitnessDay(_ date: Date) -> Int {
+        let cal = Calendar.current
+        let base = cal.startOfDay(for: startDate)
+        let d = cal.startOfDay(for: date)
+        let diff = cal.dateComponents([.day], from: base, to: d).day ?? 0
+        return diff + 1
+    }
+
+    var bodyLog: [BodyLogEntry] { state.bodyLog.sorted { $0.date < $1.date } }
+
+    /// 记录一次体重 / 体脂。同一天只保留最新一条，避免反复修改把曲线撑爆。
+    func logBody(weight: Double?, bodyFat: Double?) {
+        var rec = BodyLogEntry(date: Date(), weight: weight, bodyFat: bodyFat)
+        if let w = weight, let bf = bodyFat, w > 0, bf > 0 {
+            rec.leanMass = (w * (1 - bf / 100) * 10).rounded() / 10
+        } else if let w = weight, let bf = state.profile.bodyFat, w > 0, bf > 0 {
+            rec.leanMass = (w * (1 - bf / 100) * 10).rounded() / 10
+        }
+        let cal = Calendar.current
+        if let i = state.bodyLog.firstIndex(where: { cal.isDate($0.date, inSameDayAs: rec.date) }) {
+            // 合并：本次没填的项沿用当天已有的值
+            if rec.weight == nil { rec.weight = state.bodyLog[i].weight }
+            if rec.bodyFat == nil { rec.bodyFat = state.bodyLog[i].bodyFat }
+            if rec.leanMass == nil { rec.leanMass = state.bodyLog[i].leanMass }
+            rec.id = state.bodyLog[i].id
+            state.bodyLog[i] = rec
+        } else {
+            state.bodyLog.append(rec)
+        }
+        state.bodyLog.sort { $0.date < $1.date }
+        save()
+    }
+
+    /// 图表用：按指标取点，x 为健身天数。
+    struct ChartPoint: Identifiable {
+        let id = UUID()
+        let day: Int
+        let date: Date
+        let value: Double
+    }
+
+    func series(_ key: BodyMetricKey) -> [ChartPoint] {
+        let m = (state.profile.height ?? 0) / 100
+        return bodyLog.compactMap { e in
+            let v: Double?
+            switch key {
+            case .weight: v = e.weight
+            case .bodyFat: v = e.bodyFat
+            case .leanMass: v = e.leanMass
+            case .ffmi:
+                if let l = e.leanMass, m > 0 { v = l / (m * m) } else { v = nil }
+            }
+            guard let value = v, value > 0 else { return nil }
+            return ChartPoint(day: fitnessDay(e.date), date: e.date, value: value)
+        }
+    }
+
+    enum BodyMetricKey: String, CaseIterable, Identifiable {
+        case weight, bodyFat, leanMass, ffmi
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .weight: return "体重"
+            case .bodyFat: return "体脂率"
+            case .leanMass: return "去脂体重"
+            case .ffmi: return "FFMI"
+            }
+        }
+        var unit: String {
+            switch self {
+            case .weight, .leanMass: return "kg"
+            case .bodyFat: return "%"
+            case .ffmi: return ""
+            }
+        }
+        var color: Color {
+            switch self {
+            case .weight: return Color(red: 0.20, green: 0.52, blue: 1.0)
+            case .bodyFat: return Color(red: 1.0, green: 0.45, blue: 0.32)
+            case .leanMass: return Color(red: 0.18, green: 0.78, blue: 0.52)
+            case .ffmi: return Color(red: 0.62, green: 0.42, blue: 0.95)
+            }
+        }
     }
 
     // MARK: - 导入导出
