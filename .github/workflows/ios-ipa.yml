@@ -1,7 +1,8 @@
 name: Build iOS IPA
 
-# 这台机器是 Windows，编不了 iOS。所以借 GitHub 的 macOS 跑一次，
-# 产出「未签名 IPA」，你下载后用 Sideloadly / ESign 自己签名装到 iPhone。
+# REPS 2.0 —— 纯 SwiftUI 原生 App（不再是网页壳）。
+# 本机是 Windows，借 GitHub 的 macOS 编译，产出未签名 IPA，
+# 下载后用 Sideloadly / AltStore 自己签名装到 iPhone。
 
 on:
   workflow_dispatch:
@@ -9,7 +10,7 @@ on:
     branches: [ main, master ]
     paths:
       - "ios/**"
-      - "fitness-app/**"
+      - "reps-data/**"
       - ".github/workflows/ios-ipa.yml"
 
 jobs:
@@ -30,19 +31,16 @@ jobs:
       - name: 安装 XcodeGen
         run: brew install xcodegen
 
-      - name: 汇总网页资源到 App 包内
+      - name: 同步动作库资源
         run: |
           set -euo pipefail
-          rm -rf ios/REPS/Web
-          mkdir -p ios/REPS/Web/data ios/REPS/Web/fonts
-          cp fitness-app/index.html            ios/REPS/Web/
-          cp fitness-app/manifest.webmanifest  ios/REPS/Web/
-          cp fitness-app/icon-192.png          ios/REPS/Web/
-          cp fitness-app/icon-512.png          ios/REPS/Web/
-          cp fitness-app/data/moves.js         ios/REPS/Web/data/
-          cp fitness-app/fonts/press2p.woff2   ios/REPS/Web/fonts/
-          echo "--- Web 目录 ---"
-          find ios/REPS/Web -type f | sort
+          mkdir -p ios/REPS/Resources
+          cp reps-data/moves.json ios/REPS/Resources/moves.json
+          echo "--- Swift 源码 ---"
+          ls -la ios/REPS/*.swift
+          echo "--- 资源 ---"
+          ls -la ios/REPS/Resources/
+          python3 -c "import json;d=json.load(open('ios/REPS/Resources/moves.json'));print('动作数:',len(d['moves']))"
 
       - name: 生成 1024 图标
         run: |
@@ -81,8 +79,7 @@ jobs:
           test -n "$APP"
           echo "--- bundle 内容 ---"
           ls -la "$APP" | head -30
-          echo "--- Web 资源 ---"
-          ls -R "$APP/Web" | head -30
+          test -f "$APP/moves.json" && echo "动作库已打包" || echo "警告：moves.json 不在 bundle 根目录"
           rm -rf out
           mkdir -p out/Payload
           cp -R "$APP" out/Payload/
