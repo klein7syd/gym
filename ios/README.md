@@ -79,8 +79,16 @@ git push -u origin main
 
 ### 第 2 步：下载 IPA
 
+**最省事：直接点 Release 链接，不用登录 GitHub。**
+
+https://github.com/klein7syd/gym/releases/download/v1.0.0/REPS-unsigned.ipa
+
+**或者走 Actions artifact**（需要登录，且要解压）：
+
 Actions → 最新一次 `Build iOS IPA` → 页面底部 **Artifacts** → 下载 `REPS-unsigned-ipa`
 → 解压得到 `REPS-unsigned.ipa`。
+
+> Release 附件是永久的；Actions artifact 只保留 90 天。
 
 ### 第 3 步：Windows 上签名安装
 
