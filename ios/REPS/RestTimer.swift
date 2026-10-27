@@ -8,7 +8,7 @@ import UIKit
 /// 组间休息计时器。
 /// 关键点：用「结束时刻的绝对时间戳」算剩余，不用累减计数 —— 这样 App 被切到后台、
 /// 甚至 JS/RunLoop 被挂起，回来后剩余时间依然准确。后台到点由本地通知负责提醒。
-final class RestTimer: ObservableObject {
+final class RestTimer: NSObject, ObservableObject {
     static let shared = RestTimer()
 
     @Published private(set) var endDate: Date?
@@ -36,7 +36,8 @@ final class RestTimer: ObservableObject {
         return String(format: "%d:%02d", r / 60, r % 60)
     }
 
-    private init() {
+    private override init() {
+        super.init()
         NotificationCenter.default.addObserver(self, selector: #selector(enteredForeground),
                                                name: UIApplication.willEnterForegroundNotification, object: nil)
     }

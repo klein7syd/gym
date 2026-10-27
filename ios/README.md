@@ -1,186 +1,104 @@
-# REPS iOS 版（WKWebView 原生壳）
+# REPS 2.0 — iOS 原生版（SwiftUI）
 
-这套东西的作用：把 `fitness-app/` 那套网页原封不动装进一个真正的 iOS App 里，
-产出 `.ipa`，你自己签名装到 iPhone 上。
+从这一版开始，**不再是网页套壳**。四个页面全部用 SwiftUI 重写，控件、导航、列表、弹窗、深色模式都走 iOS 原生规范。
 
-**网页代码一行没改。** 以后改了网页，重跑一次流水线，出的就是新版。
+## 与 1.0（网页壳）的区别
 
----
+| | 1.0 网页壳 | 2.0 原生 |
+|---|---|---|
+| UI | HTML + CSS 仿 iOS | SwiftUI 原生控件 |
+| 数据 | WKWebView 的 localStorage | `Documents/reps.json` |
+| 息屏计时 | 时间戳校准，后台不提醒 | 绝对时间戳 + **本地通知**，锁屏也响 |
+| 音乐锁屏控制 | 无 | **控制中心 / 锁屏可切歌、拖进度** |
+| 歌单 | 刷新即失效 | 文件入沙盒，**永久保存** |
+| 数据备份 | 无 | **JSON 导出 / 导入** |
+| 深色模式 | 固定深色 | **跟随系统** |
 
-## 当前状态（2026-10-28）
+## 四个 Tab
 
-| 项 | 状态 |
-|---|---|
-| 云端编译 | ✅ 跑通（GitHub Actions / macos-14 / Xcode 15.4，约 5 分钟） |
-| 产物 | ✅ `dist/REPS-unsigned.ipa`（148 KB，arm64） |
-| 包内容 | ✅ `Web/index.html` + `data/moves.js` + `fonts/press2p.woff2` + 图标都在 |
-| Info.plist | ✅ `com.klein7syd.reps`，iOS 15.0+，`UIBackgroundModes=audio`，仅竖屏 |
-| 签名安装 | ⬜ 还没在你手机上跑过，需要你用 Sideloadly 签 |
+**训练**
+- 当前动作卡片，显示上次组数 / 最大重量 / 估算 1RM
+- 重量 ±2.5 kg、次数 ±1，**长按连续增减**
+- 「完成一组」自动开始组间休息，震动反馈
+- 本次组列表（每组 Epley 1RM），可撤销上一组
+- 动作选择器：109 个动作，按肌群筛选、中文/英文/肌肉/器械搜索，支持自定义动作，每个动作带要领、常见错误、替代动作
+- 结束训练写入历史；也可放弃本次
 
-**没验证过的部分**：真机行为（白屏 / 后台音频 / 文件选择器 / localStorage 是否真持久）。
-下面每一步都是能编译、能出包，但运行时还没人试过。
+**组间休息**
+- 原生圆环进度，60 / 90 / 120 / 180 秒四档，可 +30 秒、可跳过
+- 默认时长在「我的 → 训练设置」里改
+- 到点：前台铃声 + 震动；**锁屏 / 后台由系统通知提醒**
 
----
+**音乐**
+- 从「文件」导入 mp3 / m4a / wav 等本地音频，可一次多选
+- 文件复制进 App 沙盒，重开不用重新导入
+- 播放 / 暂停 / 上下首 / 进度拖动，列表左滑删除
+- **锁屏与控制中心同步歌名、可切歌、可拖进度**
 
-## 为什么是「壳 + 云端编译」
+**成长**
+- 本周总容量、本周训练次数、连续训练周数
+- 每个动作：估算 1RM 趋势折线、与上次差值、累计组次
+- 渐进超负荷建议（该加重 / 该堆次数 / 该补组数）
+- 历史训练列表，点进去看每组明细，可删除单次记录
 
-| 约束 | 解法 |
-|---|---|
-| 只有 Windows，没有 Mac | 借 GitHub Actions 的 `macos-14` 机器编译 |
-| 不会写/不想维护两套 UI | WKWebView 直接加载网页，单一代码源 |
-| 要装到自己手机上 | 产出**未签名** IPA，你用 Sideloadly / ESign 签 |
+**我的**
+- 身高体重年龄性别 → BMI、理想体重区间、BMR、TDEE
+- 填体脂率 → 去脂体重、FFMI、减到 15% 需减多少
+- 颈围 / 腰围（女加臀围）→ 美国海军公式估体脂
+- 三大项 1RM → 相对体重倍率与等级（入门到精英）
+- 默认休息时长设置
+- **导出备份 / 从备份恢复 / 清空数据**
 
-## 目录
+## 编译
 
-```
-ios/
-├── project.yml                 XcodeGen 工程描述（不手写 .xcodeproj）
-├── REPS/
-│   ├── AppDelegate.swift       入口 + AVAudioSession（后台音频的前提）
-│   ├── WebViewController.swift WKWebView 容器 + 弹窗代理
-│   ├── LocalWebServer.swift    本地 HTTP 服务，替代 file://
-│   ├── Info.plist              后台音频 / 竖屏 / 启动屏
-│   ├── Assets.xcassets/        图标（1024 由 CI 从 fitness-app 生成）
-│   └── Web/                    ← CI 运行时把 fitness-app 拷进来，不入库
-└── ..
-.github/workflows/ios-ipa.yml  云端编译流水线
-```
-
-## 两个关键设计（别乱改）
-
-**1. 用本地 HTTP 服务而不是 `file://`**
-
-WKWebView 下 `file://` 源的 `localStorage` 不可靠，杀掉 App 再进可能就空了 ——
-而这个 App 的全部训练记录都存在 `localStorage` 里。
-`LocalWebServer` 监听固定端口 `127.0.0.1:8787`，把内置的 `Web/` 目录当静态站发出去。
-origin 固定 → 数据能长期留存。**端口改了等于换库，数据会「消失」。**
-
-**2. `AVAudioSession.playback` + `UIBackgroundModes: audio`**
-
-这是比 PWA 强的地方：锁屏后 App 不会被系统挂起，
-音乐能继续放，网页里的静音保活音轨也还在，计时不会被完全冻结。
-（真机首次验证时重点看这一条。）
-
----
-
-## 三步走
-
-### 第 1 步：代码推到 GitHub
-
-仓库：`https://github.com/klein7syd/gym`（默认分支 `main`）
+本机是 Windows，用 GitHub Actions 的 macOS 编。
 
 ```bash
-cd C:/Users/32077/WorkBuddy/gym
-git push -u origin main
+python tools/push-via-api.py "说明"     # 推代码（自动触发编译）
+python tools/download-ipa.py           # 拉最新 IPA 到 dist/
 ```
 
-推上去之后，GitHub 会自动跑 `Build iOS IPA`（也可以去 Actions 页面手动 `Run workflow`）。
-整个流程大约 5–10 分钟。
+流水线：`.github/workflows/ios-ipa.yml`，改 `ios/**` 或 `reps-data/**` 自动触发。
+工程配置：`ios/project.yml`（XcodeGen，工程格式钉在 `xcode15_0` 以兼容 runner 的 Xcode 15.4）。
 
-### 第 2 步：下载 IPA
+## 源码结构
 
-**最省事：直接点 Release 链接，不用登录 GitHub。**
-
-https://github.com/klein7syd/gym/releases/download/v1.0.0/REPS-unsigned.ipa
-
-**或者走 Actions artifact**（需要登录，且要解压）：
-
-Actions → 最新一次 `Build iOS IPA` → 页面底部 **Artifacts** → 下载 `REPS-unsigned-ipa`
-→ 解压得到 `REPS-unsigned.ipa`。
-
-> Release 附件是永久的；Actions artifact 只保留 90 天。
-
-### 第 3 步：Windows 上签名安装
-
-推荐 **Sideloadly**（最省事，直接吃 IPA）：
-
-1. 装 iTunes：**必须**用 Apple 官网版（apple.com/itunes），
-   **不要**用 Microsoft Store 版，否则 Sideloadly 找不到设备驱动。
-2. 装 Sideloadly：https://sideloadly.io
-3. iPhone 用数据线连电脑，手机上点「信任此电脑」。
-4. Sideloadly 里：
-   - IPA 选 `REPS-unsigned.ipa`
-   - Apple ID 填你的（建议单独注册一个，别用主账号）
-   - 点 Start，输入密码（如果开了双重认证，要填**专用密码**，不是登录密码）
-5. 手机上：设置 → 通用 → VPN与设备管理 → 点你的 Apple ID → 信任
-6. iOS 16 及以上还要：设置 → 隐私与安全性 → **开发者模式** → 打开 → 重启手机
-
-就装好了，桌面出现 REPS 图标。
-
----
-
-## 免费 Apple ID 的限制（必须知道）
-
-| 项 | 免费账号 |
-|---|---|
-| 有效期 | **7 天**，到期 App 打不开，要重新签一次 |
-| 同时装的 App | 最多 3 个 |
-| 签名方式 | 每周用 Sideloadly 重签，**覆盖安装，数据不丢** |
-
-> 重签时**不要先卸载 App**，直接用 Sideloadly 覆盖装。
-> 一卸载，`localStorage` 里的训练记录就跟着没了。
-> 有付费开发者账号（$99/年）就是 1 年有效期，流程完全一样。
-
-## 音乐文件怎么放
-
-App 里的「➕ 添加音乐」走的是系统文件选择器，只能选 **「文件」App 里能看到的音频**。
-Apple Music / 流媒体受版权保护，选不了。做法：
-用 iTunes 或爱思助手把 mp3 传到「文件」App（或 iCloud Drive），再在 App 里选。
-选完的歌是临时引用，**每次重开 App 要重新选一遍** —— 这是网页版的老问题，还没修。
-
----
-
-## 改完代码怎么推
-
-这台机器（Windows 那台）到 `github.com:443` 的 git 传输被代理挡着，
-`git push` 会报 `CONNECT tunnel failed, response 502`。但 `api.github.com` 是通的，
-所以走 REST API：
-
-```bash
-cd C:/Users/32077/WorkBuddy/gym
-git add -A && git commit -m "改了啥"
-python tools/push-via-api.py "改了啥"       # 用已保存的 github 凭据，无需额外配置
+```
+ios/REPS/
+  REPSApp.swift       @main 入口 + 四 Tab
+  Models.swift        数据模型（训练 / 档案 / 音轨 / 动作库）
+  Store.swift         数据层：持久化 + 全部计算逻辑
+  RestTimer.swift     休息计时 + 本地通知
+  AudioPlayer.swift   AVPlayer + 锁屏远程控制 + 文件导入
+  Components.swift    长按连加按钮、步进器、折线图、圆环、文件选择、分享
+  TrainView.swift     训练页 + 动作选择器 + 动作详情
+  MusicView.swift     音乐页
+  GrowthView.swift    成长页 + 单次训练详情
+  ProfileView.swift   我的
+  Resources/moves.json  109 个动作库
+  Assets.xcassets/    图标
+  Info.plist
 ```
 
-产物下载也走 API：
+约 2400 行 Swift，无第三方依赖，最低 iOS 15.0，仅竖屏。
 
-```bash
-python tools/download-ipa.py                # 存到 dist/REPS-unsigned.ipa
-```
+## 安装
 
-> 注意：API 建出来的 tree sha 和本地 git 算的不一样，所以远端 commit sha 与本地不同（内容一致）。
-> 有网的时候执行 `git fetch origin && git reset --hard origin/main` 就能把本地历史对齐。
+1. 下载 IPA（见 Release）
+2. Windows 上用 [Sideloadly](https://sideloadly.io) 签名
+   - iTunes **必须**是 Apple 官网版，Microsoft Store 版找不到设备
+   - 开双重认证的账号，密码栏填**专用密码**
+3. 手机：设置 → 通用 → VPN与设备管理 → 信任；iOS 16+ 另需在「隐私与安全性」开**开发者模式**并重启
 
-## 踩过的坑（都已在配置里绕开）
+免费 Apple ID 签的包 **7 天过期**，到期重签即可。
 
-1. **XcodeGen 默认生成 Xcode 16 的工程格式（objectVersion 77）**，
-   macos-14 上的 Xcode 15.4 直接报 `future Xcode project file format (77)`。
-   → `project.yml` 里钉死 `projectFormat: xcode15_0`。
-2. **`String.split(separator:)` 的 separator 只能是 Character**，
-   拿 `"\r\n"` 去切会编译失败 → 换成 `components(separatedBy:)`。
-3. **`@main` 在 UIApplicationDelegate 上有版本坑** → 用 `@UIApplicationMain`，稳。
-4. **空仓库不能直接调 Git Data API 建 blob**（409），得先用 Contents API 落一个文件。
+## 注意事项
 
-## 常见问题
+- **1.0 的数据不会自动带过来。** 1.0 存在 WebView 的 localStorage，2.0 存在沙盒 JSON，两者不通用。如果你已经在 1.0 里记了数据，别直接覆盖安装，先告诉我，我写个迁移。
+- **重装 / 卸载会清空数据。** 重签续期时不要先卸载；换手机前先在「我的」里导出备份。
+- 首次启动会请求**通知权限**，请允许，否则锁屏时休息结束不提醒。
+- 所有数据只存在本机，没有任何网络请求和账号体系。
 
-**Actions 里编译失败**
-把报错日志发我，多数是 Swift 语法或工程配置问题，改 `ios/` 下的文件重推即可。
+## 已知未验证项
 
-**装完打开是白屏**
-说明本地服务或资源有问题。手机上开「设置 → 隐私与安全性 → 开发者模式」后再试；
-还不行的话告诉我，我把 `WebViewController` 的兜底逻辑和日志再调一版。
-
-**提示「无法验证 App」/ 闪退**
-基本是签名没走完：证书没信任、或者开发者模式没开。
-
-**换手机 / 想备份数据**
-目前还没有导出功能。这条是已知最大风险，建议尽早加「导出 JSON」到「我」页。
-
----
-
-## 已知没做的
-
-- 休息结束的**本地通知**（现在靠网页内提示音，App 被系统彻底冻结时可能不响）
-- Media Session（锁屏显示歌名、切歌）
-- 数据导出备份
-- 数据在网页版 / 安卓版 / iOS 版之间互通
+真机未跑过（开发环境只有 Windows）。编译产物经过 zip 完整性、Mach-O 架构、Info.plist、资源打包校验，但**界面表现、后台行为需要你在真机上确认**。

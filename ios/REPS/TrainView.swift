@@ -104,7 +104,7 @@ struct TrainView: View {
             }
             .buttonStyle(.plain)
 
-            if store.current?.exercises.count ?? 0 > 1 {
+            if (store.current?.exercises.count ?? 0) > 1 {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(Array((store.current?.exercises ?? []).enumerated()), id: \.element.id) { i, e in
