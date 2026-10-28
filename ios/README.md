@@ -1,4 +1,4 @@
-# REPS iOS · 4.8.0
+# REPS iOS · 4.9.0
 
 纯 SwiftUI 原生 App（不是网页壳），源码在 `ios/REPS/`，由 GitHub Actions 在 macOS 上编译成未签名 IPA。
 
@@ -9,10 +9,10 @@
 **下载（免登录直链）**
 
 ```
-https://github.com/klein7syd/gym/releases/download/v4.8.0/REPS-4.8.0-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.9.0/REPS-4.9.0-unsigned.ipa
 ```
 
-Release 页：https://github.com/klein7syd/gym/releases/tag/v4.8.0
+Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.0
 
 **签名（Windows 上用 Sideloadly）**
 
@@ -26,7 +26,28 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.8.0
 
 ---
 
-## 二、4.8 这一版做了什么
+## 二、4.9 这一版做了什么
+
+### 上下大黑边：真正的病因
+`TabView` 和播放页都是**按安全区布局**的。里面的背景用 `ignoresSafeArea()` 能画到状态栏 /
+底部横条上，但这条链路上只要挂了 `.clipShape(RoundedRectangle(cornerRadius: …))`，
+**裁剪边就是安全区矩形 —— 圆角为 0 也照样硬切一刀**，铺出去的部分被削平，露出底下的深色层。
+4.6 加卡片堆叠时给根 TabView 套了裁剪，黑边就是从那一版开始的；4.8 只调了播放页的修饰符顺序，
+裁剪还在，所以「依旧」。
+
+改法：`Theme.swift` 新增 `CardClip`，**圆角为 0 时什么都不做**。
+
+| 位置 | 以前 | 现在 |
+|---|---|---|
+| 根 TabView | 无条件裁 | `CardClip(active: isOpen, radius: 34 - 20 * pull)` |
+| 播放页 | 无条件裁 | `CardClip(active: dragOffset > 0.5, radius: min(34, dragOffset / 5))` |
+
+底层配色也一起改了：常态铺 `AppBackground`（页面同色），播放页打开时才换成 `#212121`，
+以后任何没铺到的安全区露出来都是同色，不可能再出现黑条。
+
+---
+
+## 二·旧：4.8 这一版做了什么
 
 ### 1. 专辑详情：专辑名 / 歌手名颠倒
 Apple Music 里**专辑名是大字**，艺人是下面小字。之前 `displayArtist` 被放在 21pt 粗体、
