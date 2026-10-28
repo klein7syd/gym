@@ -87,10 +87,7 @@ final class MusicHub: NSObject, ObservableObject {
     @Published private(set) var duration: Double = 0
     @Published private(set) var errorMessage: String?
     @Published private(set) var engine: Engine = .none
-    /// 完整版播放时，系统给的真实封面（比 iTunes 的 600x600 更准）
-    @Published private(set) var nowArtwork: UIImage?
 
-    private var artworkCache: [MPMediaEntityPersistentID: UIImage] = [:]
 
     @Published var repeatMode: RepeatMode = .off {
         didSet {
@@ -108,6 +105,14 @@ final class MusicHub: NSObject, ObservableObject {
     /// 拖动进度条刚 seek 完的保护期：这段时间内不采用轮询回来的时间
     private var seekGuardUntil = Date.distantPast
     private let store = Store.shared
+
+    /// 跟系统播放器打交道专用：串行队列，避免并发设队列互相覆盖
+    private let mpQueue = DispatchQueue(label: "reps.musicplayer", qos: .userInitiated)
+    /// 上次交给系统播放器的曲目序列。相同就不重建队列（setQueue 很贵）
+    private var mpQueueSignature: [MPMediaEntityPersistentID] = []
+    /// 连点保护：只有最后一次装载生效
+    private let tokenLock = NSLock()
+    private var _loadToken = 0
 
     /// 系统播放器队列里的位置 → 我们自己 queue 里的位置。
     /// 完整版队列会跳过那些没匹配上的歌，所以两张下标不是一一对应的。
@@ -147,6 +152,19 @@ final class MusicHub: NSObject, ObservableObject {
         case .all: return MPMusicRepeatMode.all
         case .one: return MPMusicRepeatMode.one
         }
+    }
+
+    /// 取下一个装载令牌（主线程调）
+    private func bumpToken() -> Int {
+        tokenLock.lock(); defer { tokenLock.unlock() }
+        _loadToken &+= 1
+        return _loadToken
+    }
+
+    /// 后台队列里读「当前最新令牌」，用来判断自己是不是已经被后来的点击取代
+    private var currentLoadToken: Int {
+        tokenLock.lock(); defer { tokenLock.unlock() }
+        return _loadToken
     }
 
     private func configureRemoteCommands() {
@@ -246,7 +264,8 @@ final class MusicHub: NSObject, ObservableObject {
         stopTicker()
         engine = .none
         indexMap = nil
-        nowArtwork = nil
+        mpQueueSignature = []
+        _ = bumpToken()
         queue = []
         index = 0
         currentTime = 0
@@ -389,6 +408,11 @@ final class MusicHub: NSObject, ObservableObject {
     }
 
     /// 完整版：从当前队列里挑出所有能在资料库匹配到的歌，组成系统播放器队列。
+    ///
+    /// 关键改动：跟系统播放器打交道（stop / setQueue / nowPlayingItem / play）全是
+    /// 跨进程调用，setQueue 一次可能几百毫秒。以前整套放在主线程同步跑，
+    /// 点一下播放就卡一大下。现在**先在本机把状态全部就位**（界面立刻有反应），
+    /// 系统队列交给后台串行队列去做，而且队列没变就不再重建。
     private func loadAppleMusic(item: PlayItem, autoplay: Bool) -> Bool {
         let svc = AppleMusicService.shared
         guard svc.isGranted else { return false }
@@ -412,40 +436,46 @@ final class MusicHub: NSObject, ObservableObject {
         stopTicker()
 
         let media = pool.map { $0.media }
-        captureArtwork(media[pos])
-        let mp = svc.player
-        mp.stop()
-        mp.setQueue(with: MPMediaItemCollection(items: media))
-        mp.prepareToPlay()
-        mp.nowPlayingItem = media[pos]
-        mp.repeatMode = mpRepeatMode
-        if autoplay {
-            mp.play()
-            isPlaying = true
-        } else {
-            isPlaying = false
-        }
+        let target = media[pos]
+        let signature = media.map { $0.persistentID }
+        let rebuild = (signature != mpQueueSignature)
+        let mode = mpRepeatMode
 
+        // ── 先把界面状态就位，不等系统播放器 ──
         engine = .appleMusic
         indexMap = pool.map { $0.local }
-
         // MPMediaItem.playbackDuration 是非可选的 TimeInterval
-        let fullLength = media[pos].playbackDuration
+        let fullLength = target.playbackDuration
         duration = fullLength > 0 ? fullLength : item.fullDuration
+        currentTime = 0
+        isPlaying = autoplay
         startTicker()
-        return true
-    }
 
-    /// 资料库封面存在 MPMediaItem 里，取出来给界面用。
-    /// 完整版优先用这张（本地真实封面），没有再退回 iTunes 的 600x600 图。
-    private func captureArtwork(_ item: MPMediaItem) {
-        if let cached = artworkCache[item.persistentID] {
-            nowArtwork = cached
-            return
+        // 封面预热也放后台（ArtworkStore 内部就是异步的），先给当前这首
+        let lo = max(0, pos - 1), hi = min(media.count - 1, pos + 2)
+        ArtworkStore.shared.prefetch(Array(media[lo...hi]))
+
+        // ── 系统播放器交给后台，串行执行保证顺序 ──
+        let token = bumpToken()
+        mpQueue.async { [weak self] in
+            guard let self = self else { return }
+            // 用户连着点了几首时，只让最后一次生效，中间的丢掉
+            if self.currentLoadToken != token { return }
+            let mp = svc.player
+            if rebuild {
+                mp.stop()
+                mp.setQueue(with: MPMediaItemCollection(items: media))
+                mp.repeatMode = mode
+            }
+            if mp.nowPlayingItem?.persistentID != target.persistentID {
+                mp.nowPlayingItem = target
+            }
+            if autoplay { mp.play() } else { mp.pause() }
+            DispatchQueue.main.async {
+                self.mpQueueSignature = signature
+            }
         }
-        let img = item.artwork?.image(at: CGSize(width: 600, height: 600))
-        nowArtwork = img
-        if let img = img { artworkCache[item.persistentID] = img }
+        return true
     }
 
     // MARK: - AVPlayer（本地 / 试听）
@@ -459,7 +489,6 @@ final class MusicHub: NSObject, ObservableObject {
         tearDownAV()
         engine = .av
         indexMap = nil
-        nowArtwork = nil
 
         guard let url = item.fileURL else {
             engine = .none
@@ -523,13 +552,18 @@ final class MusicHub: NSObject, ObservableObject {
 
     // MARK: - 外部引擎轮询
     //
-    // MPMusicPlayerController 没有 SwiftUI 能订阅的进度属性，
-    // 用 0.1 秒轮询把时间、时长、播放状态、队列位置同步回来。
-    // 刚 seek 完的那 0.9 秒里不信轮询回来的旧时间，避免把手一松进度条往回跳。
+    // MPMusicPlayerController 的每个进度/状态属性都是一次跨进程调用。
+    // 之前 0.1 秒读四个属性，等于每秒 40 次 XPC 全压在主线程上 ——
+    // 这是「点播放卡一下」「滚动发涩」的另一半原因。
+    //
+    // 现在：0.1 秒只在本地把时间往前推（不外呼），0.5 秒才跟系统对一次账，
+    // 偏差小于 0.35 秒就不纠（保住平滑），刚 seek 完的 0.9 秒内完全不信系统时间。
+
+    private var tickCount = 0
 
     private func startTicker() {
         stopTicker()
-        // 0.1 秒一次：进度条是 1pt 1pt 走的，不再是 0.4 秒一跳的台阶感
+        tickCount = 0
         let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             self?.tickExternal()
         }
@@ -544,28 +578,47 @@ final class MusicHub: NSObject, ObservableObject {
 
     private func tickExternal() {
         guard engine == .appleMusic else { return }
-        let mp = AppleMusicService.shared.player
 
-        let cur = mp.currentPlaybackTime
-        if cur.isFinite, cur >= 0, Date() >= seekGuardUntil { currentTime = cur }
-        if let d = mp.nowPlayingItem?.playbackDuration, d > 0 { duration = d }
+        tickCount += 1
+
+        // ── 每 0.1 秒：本地推进 ──
+        if isPlaying, Date() >= seekGuardUntil {
+            let next = currentTime + 0.1
+            if duration > 0 {
+                if next < duration { currentTime = next }
+            } else {
+                currentTime = next
+            }
+        }
+
+        // ── 每 0.5 秒：跟系统对一次账 ──
+        guard tickCount % 5 == 0 else { return }
+        let mp = AppleMusicService.shared.player
 
         let playing = (mp.playbackState == .playing)
         if playing != isPlaying { isPlaying = playing }
 
+        let cur = mp.currentPlaybackTime
+        if cur.isFinite, cur >= 0, Date() >= seekGuardUntil {
+            if !isPlaying || abs(cur - currentTime) > 0.35 { currentTime = cur }
+        }
+
+        syncTrackIfNeeded(mp)
+    }
+
+    /// 系统自己切歌（放完自动下一首、或在系统里换了歌）时同步下标和时长。
+    /// 封面由 TrackArt 跟着 mediaID 自己走，这里不用管。
+    private func syncTrackIfNeeded(_ mp: MPMusicPlayerController) {
         let p = mp.indexOfNowPlayingItem
-        if let map = indexMap, map.indices.contains(p) {
-            let mapped = map[p]
-            if mapped != index {
-                // 系统自己切到下一首了：同步下标、封面、时长，界面才不会停在上一首
-                index = mapped
-                if let it = mp.nowPlayingItem {
-                    captureArtwork(it)
-                    let d = it.playbackDuration
-                    if d > 0 { duration = d }
-                }
-                currentTime = 0
-            }
+        guard let map = indexMap, map.indices.contains(p) else { return }
+        let mapped = map[p]
+        guard mapped != index else { return }
+        index = mapped
+        currentTime = 0
+        if let it = mp.nowPlayingItem {
+            ArtworkStore.shared.prefetch([it])
+            let d = it.playbackDuration
+            if d > 0 { duration = d }
         }
     }
 

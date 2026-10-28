@@ -36,11 +36,25 @@ final class AppleMusicService: ObservableObject {
     private var indexBuilt = false
     private var byKey: [String: MPMediaItem] = [:]
     private var byTitle: [String: [MPMediaItem]] = [:]
-    /// 资料库全量，和 searchKeys 同序，供本地搜索用
-    private var items: [MPMediaItem] = []
-    private var searchKeys: [(title: String, artist: String, album: String)] = []
+    /// 资料库全量索引，搜索就遍历它
+    private var entries: [Entry] = []
     private var byID: [MPMediaEntityPersistentID: MPMediaItem] = [:]
     private let work = DispatchQueue(label: "reps.applemusic.index", qos: .userInitiated)
+
+    /// 一条可搜索记录。文本都做过规范化，另外带上拼音 / 首字母，
+    /// 这样中文歌名也能用拼音搜（`qt` → 晴天，`zhoujielun` → 周杰伦）。
+    struct Entry {
+        let item: MPMediaItem
+        let title: String
+        let artist: String
+        let album: String
+        let titleTokens: [String]
+        let artistTokens: [String]
+        let titlePinyin: String
+        let titleInitials: String
+        let artistPinyin: String
+        let artistInitials: String
+    }
 
     /// 系统播放器。applicationMusicPlayer 是 App 内播放，不接管「音乐」App 的播放状态。
     var player: MPMusicPlayerController { MPMusicPlayerController.applicationMusicPlayer }
@@ -99,9 +113,10 @@ final class AppleMusicService: ObservableObject {
 
     // MARK: - 资料库索引
     //
-    // 全量读一次资料库（几千首也就几十万字符的规范化），建两张表：
-    // 「歌名|艺人」精确表 + 「歌名」倒排表。之后匹配就是纯字典查找。
-    // 建索引放后台队列，不卡主线程。
+    // 全量读一次资料库（几千首），每条记录预先算好：
+    //   规范化歌名/艺人/专辑、切好的词、拼音全拼、拼音首字母。
+    // 之后搜索就是纯内存遍历 + 打分，不联网、不出资料库范围。
+    // 全部在后台队列做，主线程不卡。
 
     func buildIndexIfNeeded(force: Bool = false) {
         guard access == .granted else { return }
@@ -115,20 +130,33 @@ final class AppleMusicService: ObservableObject {
             var exact: [String: MPMediaItem] = [:]
             var titles: [String: [MPMediaItem]] = [:]
             var ids: [MPMediaEntityPersistentID: MPMediaItem] = [:]
-            var keys: [(title: String, artist: String, album: String)] = []
+            var list: [Entry] = []
             exact.reserveCapacity(songs.count)
-            keys.reserveCapacity(songs.count)
+            list.reserveCapacity(songs.count)
 
             for it in songs {
                 let rawTitle = it.title ?? ""
                 guard !rawTitle.isEmpty else { continue }
                 let t = Self.normalize(rawTitle)
                 guard !t.isEmpty else { continue }
-                let a = Self.normalize(it.artist ?? "")
+                let rawArtist = it.artist ?? ""
+                let a = Self.normalize(rawArtist)
                 exact["\(t)|\(a)"] = it
                 titles[t, default: []].append(it)
                 ids[it.persistentID] = it
-                keys.append((t, a, Self.normalize(it.albumTitle ?? "")))
+
+                let tp = Self.pinyin(rawTitle)
+                let ap = Self.pinyin(rawArtist)
+                list.append(Entry(item: it,
+                                  title: t,
+                                  artist: a,
+                                  album: Self.normalize(it.albumTitle ?? ""),
+                                  titleTokens: Self.tokens(rawTitle),
+                                  artistTokens: Self.tokens(rawArtist),
+                                  titlePinyin: tp.full,
+                                  titleInitials: tp.initials,
+                                  artistPinyin: ap.full,
+                                  artistInitials: ap.initials))
             }
 
             let total = songs.count
@@ -136,8 +164,7 @@ final class AppleMusicService: ObservableObject {
                 self.byKey = exact
                 self.byTitle = titles
                 self.byID = ids
-                self.items = songs
-                self.searchKeys = keys
+                self.entries = list
                 self.librarySongCount = total
                 self.isIndexing = false
                 self.indexBuilt = true
@@ -151,30 +178,90 @@ final class AppleMusicService: ObservableObject {
         byID[id]
     }
 
-    /// 资料库内搜索。全部在本地索引里做，不联网，也不会搜出资料库外的歌。
-    /// 排序：歌名前缀 → 歌名包含 → 艺人包含 → 专辑包含。
-    func search(_ raw: String, limit: Int = 40) -> [MPMediaItem] {
+    // MARK: - 搜索
+    //
+    // 之前那版的问题是「只要包含就收」：搜「晴天」，专辑名里带「晴天」的、
+    // 艺人名里带「晴」的全被塞进结果，看起来就是一堆无关的歌。
+    //
+    // 现在按分数来：
+    //   ① 多关键词是 AND —— 输入「周杰伦 稻香」必须两个词都命中才算
+    //   ② 每个词分别打分，歌名完全等于 100、歌名里某个词等于 92、歌名前缀 88…
+    //      艺人 62 起、专辑 30 起（专辑最容易出噪音，权重压到最低）
+    //   ③ 有强命中时设一个相关性下限，把纯靠专辑名擦边命中的结果直接丢掉
+    //   ④ 支持拼音：`qt` / `qingtian` 都能搜到「晴天」
+    func search(_ raw: String, limit: Int = 60) -> [MPMediaItem] {
         guard access == .granted, indexBuilt else { return [] }
-        let q = Self.normalize(raw)
-        guard !q.isEmpty else { return [] }
 
-        var hits: [(rank: Int, order: Int, item: MPMediaItem)] = []
-        for (i, k) in searchKeys.enumerated() {
-            var rank = -1
-            if k.title.hasPrefix(q) {
-                rank = 0
-            } else if k.title.contains(q) {
-                rank = 1
-            } else if k.artist.contains(q) {
-                rank = 2
-            } else if k.album.contains(q) {
-                rank = 3
+        let tokens = Self.tokens(raw)
+        guard !tokens.isEmpty else { return [] }
+        let joined = tokens.joined()
+        let isLatin = joined.allSatisfy { $0.isASCII }
+
+        var scored: [(score: Int, order: Int, len: Int, item: MPMediaItem)] = []
+        scored.reserveCapacity(64)
+
+        for (i, e) in entries.enumerated() {
+            var total = 0
+            var matchedAll = true
+            for tok in tokens {
+                let s = Self.score(token: tok, entry: e, latin: isLatin)
+                if s == 0 { matchedAll = false; break }
+                total += s
             }
-            guard rank >= 0 else { continue }
-            hits.append((rank, i, items[i]))
+            guard matchedAll else { continue }
+
+            // 多词查询时，整串连在一起出现在歌名里再加一笔
+            if tokens.count > 1, e.title.contains(joined) { total += 30 }
+            scored.append((total, i, e.title.count, e.item))
         }
-        hits.sort { $0.rank != $1.rank ? $0.rank < $1.rank : $0.order < $1.order }
-        return hits.prefix(limit).map { $0.item }
+        guard !scored.isEmpty else { return [] }
+
+        // 相关性下限：有明确歌名/艺人命中时，纯专辑擦边的结果不展示
+        let best = scored.map { $0.score }.max() ?? 0
+        let floor = best >= 70 ? max(34, best / 3) : 0
+
+        var out = scored.filter { $0.score >= floor }
+        out.sort {
+            if $0.score != $1.score { return $0.score > $1.score }
+            // 同分时短标题优先（越短越接近完整匹配）
+            if $0.len != $1.len { return $0.len < $1.len }
+            return $0.order < $1.order
+        }
+        return out.prefix(limit).map { $0.item }
+    }
+
+    private static func score(token: String, entry: Entry, latin: Bool) -> Int {
+        let t = entry.title, a = entry.artist, al = entry.album
+
+        // —— 歌名 ——
+        if t == token { return 100 }
+        if entry.titleTokens.contains(token) { return 92 }
+        if t.hasPrefix(token) { return 88 }
+        if entry.titleTokens.contains(where: { $0.hasPrefix(token) }) { return 80 }
+        if t.contains(token) { return 74 }
+
+        // —— 艺人 ——
+        if a == token { return 64 }
+        if entry.artistTokens.contains(token) { return 60 }
+        if a.hasPrefix(token) { return 56 }
+        if a.contains(token) { return 48 }
+
+        // —— 拼音（只对纯字母输入有意义）——
+        if latin {
+            if entry.titlePinyin == token { return 86 }
+            if entry.titleInitials == token { return 82 }
+            if entry.titlePinyin.hasPrefix(token) { return 78 }
+            if entry.titleInitials.hasPrefix(token) { return 70 }
+            if entry.titlePinyin.contains(token) { return 66 }
+            if entry.artistPinyin == token { return 58 }
+            if entry.artistInitials == token { return 54 }
+            if entry.artistPinyin.hasPrefix(token) { return 50 }
+        }
+
+        // —— 专辑（权重最低，只作兜底）——
+        if al == token { return 32 }
+        if al.contains(token) { return 26 }
+        return 0
     }
 
     /// 按「歌名 + 艺人」在资料库里兜底匹配（只在 PlayItem 没带 persistentID 时用）。
@@ -212,6 +299,31 @@ final class AppleMusicService: ObservableObject {
         t = t.replacingOccurrences(of: "(feat\\.?|ft\\.?|featuring)\\s.*$", with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: "[^0-9a-z\\p{Han}]+", with: "", options: .regularExpression)
         return t
+    }
+
+    /// 分词：先按空白和各种分隔符切开，每段再规范化。查询和索引都走这套，
+    /// 这样「周杰伦 稻香」是两个词（分别命中艺人和歌名），而不是一个拼在一起的长串。
+    static func tokens(_ s: String) -> [String] {
+        let seps = CharacterSet(charactersIn: " \t\n-–—_·•/\\|,，、;；:：&+()（）[]【】\"'“”‘’")
+        return s.components(separatedBy: seps)
+            .map { normalize($0) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// 汉字转拼音：全拼（无声调）+ 首字母。
+    static func pinyin(_ s: String) -> (full: String, initials: String) {
+        guard !s.isEmpty else { return ("", "") }
+        let latin = s.applyingTransform(.toLatin, reverse: false)?
+            .applyingTransform(.stripDiacritics, reverse: false) ?? s
+        let full = latin.lowercased()
+            .replacingOccurrences(of: "[^0-9a-z]+", with: "", options: .regularExpression)
+        let initials = latin
+            .components(separatedBy: CharacterSet(charactersIn: " \t-–—_·•/\\|,，、;；:：&+()（）[]【】\"'“”‘’"))
+            .compactMap { $0.first }
+            .map { String($0).lowercased() }
+            .joined()
+            .replacingOccurrences(of: "[^0-9a-z]+", with: "", options: .regularExpression)
+        return (full, initials)
     }
 
     // MARK: - 播放控制

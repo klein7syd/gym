@@ -227,8 +227,8 @@ struct MusicView: View {
     // MARK: - 资料库搜索
     //
     // 只搜自己的 Apple Music 资料库：不联网、不搜曲库以外的任何东西。
-    // 搜出来的一律能整首完整播放（会员身份直接生效），
-    // 也就不会再有「搜到一堆不搭边的歌」「有会员却只给 30 秒」。
+    // 排序和相关性门限都在 AppleMusicService.search 里做（多词 AND、按分数、
+    // 支持拼音），这里只负责调用 + 顺手预热前几行的封面。
 
     private func runLibrarySearch() {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -239,6 +239,8 @@ struct MusicView: View {
         }
         didSearch = true
         libraryHits = am.search(q)
+        // 前几行的封面先排进后台，滚动时不至于一片灰
+        ArtworkStore.shared.prefetch(libraryHits, side: 160, limit: 12)
     }
 
     @ViewBuilder
@@ -290,7 +292,9 @@ struct MusicView: View {
             playLibrary(at: index)
         } label: {
             HStack(spacing: 12) {
-                MediaArtwork(item: m, size: 50)
+                TrackArt(title: m.title ?? "未知曲目",
+                         mediaID: m.persistentID,
+                         size: 50)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(m.title ?? "未知曲目")
                         .font(.system(size: 15, weight: playing ? .semibold : .regular))
@@ -359,7 +363,9 @@ struct MusicView: View {
                 showPlayer = true
             } label: {
                 HStack(spacing: 14) {
-                    artwork(url: hub.current?.artworkURL, size: 76, seed: hub.current?.title ?? "REPS")
+                    TrackArt(title: hub.current?.title ?? "REPS",
+                             mediaID: hub.current?.mediaID,
+                             size: 76)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 5) {
                             Text("正在播放")
@@ -398,13 +404,13 @@ struct MusicView: View {
             .buttonStyle(.plain)
 
             VStack(spacing: 5) {
-                SlimBar(progress: cardProgressRatio,
-                        onScrub: { v in cardScrub = v * max(1, hub.duration) },
-                        onCommit: { v in
-                            hub.seek(to: v * max(1, hub.duration))
-                            cardScrub = nil
-                        },
-                        trackHeight: 4)
+                GlassBar(progress: cardProgressRatio,
+                         onScrub: { v in cardScrub = v * max(1, hub.duration) },
+                         onCommit: { v in
+                             hub.seek(to: v * max(1, hub.duration))
+                             cardScrub = nil
+                         },
+                         trackHeight: 6)
                 HStack {
                     Text(MusicHub.formatTime(cardScrub ?? hub.currentTime))
                     Spacer()
@@ -570,26 +576,6 @@ struct MusicView: View {
     }
 
 
-    // MARK: - 封面
-
-    private func artwork(url: URL?, size: CGFloat, seed: String) -> some View {
-        Group {
-            if let url = url {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    default:
-                        AlbumArt(title: seed, size: size)
-                    }
-                }
-            } else {
-                AlbumArt(title: seed, size: size)
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.08, style: .continuous))
-    }
 }
 
 // MARK: - 底部迷你播放条
@@ -651,37 +637,29 @@ struct MiniPlayerBar: View {
     }
 
     private var artwork: some View {
-        Group {
-            if let u = hub.current?.artworkURL {
-                AsyncImage(url: u) { phase in
-                    if case .success(let img) = phase {
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    } else {
-                        AlbumArt(title: hub.current?.title ?? "", size: 40)
-                    }
-                }
-            } else {
-                AlbumArt(title: hub.current?.title ?? "", size: 40)
-            }
-        }
-        .frame(width: 40, height: 40)
-        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        TrackArt(title: hub.current?.title ?? "",
+                 mediaID: hub.current?.mediaID,
+                 size: 40)
     }
 }
 
 // MARK: - 全屏播放页
 //
-// 照 Apple Music 的播放页抄的版式：
-//   ─ 抓手 ─
-//   ⌄                          ⋯
-//   [          封面          ]
-//   歌名（粗，左对齐）
-//   艺人（灰，左对齐）
-//   ──── 进度条 ────
-//   0:12                    -3:20
-//   ☰    ⏮    ▶    ⏭    🔁
-//   🔊 ───── 音量 ───── 🔊
-//   [ 训练状态 ]            ← 顶掉 Apple Music 底部的歌词/待播/AirPlay
+// 版式按 Apple Music 的播放页排（iOS 17/18 那一版）：
+//
+//            ── 抓手 ──
+//   ⌄          正在播放           ⋯
+//        [      封面      ]
+//   歌名（20 粗，左对齐）
+//   艺人（20 常规，灰，左对齐）
+//   ══════ 进度条 ══════
+//   0:12                  -3:20
+//   ☰     ⏮     ▶     ⏭     🔁
+//   🔈 ══════ 音量 ══════ 🔊
+//   [ Apple Music 底部那排歌词/待播/AirPlay 换成训练状态 ]
+//
+// 进度条、音量条都是「白灰玻璃条」：8pt 厚，浅灰轨道 + 白色（深色模式）
+// 或深灰（浅色模式）已播放段，边缘 0.5pt 高光描边，没有圆点把手。
 
 struct NowPlayingView: View {
     @ObservedObject var hub = MusicHub.shared
@@ -695,17 +673,16 @@ struct NowPlayingView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let inset: CGFloat = 20
             // 除封面以外的固定高度合计
             let fixed: CGFloat = 372
-            let side = max(150, min(geo.size.width - inset * 2, geo.size.height - fixed, 336))
+            let side = max(140, min(geo.size.width - 32, geo.size.height - fixed, 352))
 
             VStack(spacing: 0) {
                 grabber
 
                 header
 
-                Spacer(minLength: 4)
+                Spacer(minLength: 8)
 
                 cover(side: side)
 
@@ -713,15 +690,15 @@ struct NowPlayingView: View {
 
                 titleBlock
 
-                Spacer().frame(height: 16)
+                Spacer().frame(height: 20)
 
                 progress
 
-                Spacer().frame(height: 14)
+                Spacer().frame(height: 10)
 
                 controls
 
-                Spacer().frame(height: 14)
+                Spacer().frame(height: 8)
 
                 volume
 
@@ -729,26 +706,33 @@ struct NowPlayingView: View {
 
                 trainingBar
                     .padding(.horizontal, 16)
+                    .padding(.bottom, 4)
             }
-            .padding(.bottom, 6)
+            .frame(width: geo.size.width, height: geo.size.height)
         }
-        .background { AppBackground() }
+        .background { playerBackground }
         .offset(y: max(0, dragOffset))
         .sheet(isPresented: $showQueue) {
             QueueSheet()
         }
     }
 
+    /// 纯色底，不再有渐变 / 柔光色斑（和全局一致）。
+    private var playerBackground: some View {
+        Color(UIColor.systemBackground).ignoresSafeArea()
+    }
+
     // MARK: 抓手
 
     private var grabber: some View {
         Capsule()
-            .fill(Color.secondary.opacity(0.35))
-            .frame(width: 34, height: 5)
+            .fill(Color.secondary.opacity(0.30))
+            .frame(width: 36, height: 5)
             .padding(.top, 6)
+            .padding(.bottom, 2)
     }
 
-    // MARK: 顶部
+    // MARK: 顶部：左收起 · 中「正在播放」· 右更多
 
     private var header: some View {
         HStack(spacing: 0) {
@@ -756,12 +740,20 @@ struct NowPlayingView: View {
                 dismiss()
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 18, weight: .medium))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(.primary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+
+            Spacer(minLength: 0)
+
+            Text("正在播放")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+                .textCase(.uppercase)
+                .tracking(0.6)
 
             Spacer(minLength: 0)
 
@@ -791,14 +783,14 @@ struct NowPlayingView: View {
                     }
                 }
             } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 18, weight: .medium))
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 19, weight: .regular))
                     .foregroundColor(.primary)
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 8)
         .contentShape(Rectangle())
         .gesture(
             DragGesture()
@@ -820,64 +812,51 @@ struct NowPlayingView: View {
     // MARK: 封面
 
     private func cover(side: CGFloat) -> some View {
-        Group {
-            if let img = hub.nowArtwork {
-                Image(uiImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } else if let u = hub.current?.artworkURL {
-                AsyncImage(url: u) { phase in
-                    if case .success(let img) = phase {
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    } else {
-                        AlbumArt(title: hub.current?.title ?? "REPS", size: side)
-                    }
-                }
-            } else {
-                AlbumArt(title: hub.current?.title ?? "REPS", size: side)
-            }
-        }
-        .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .shadow(color: .black.opacity(0.20), radius: 20, y: 12)
-        .scaleEffect(hub.isPlaying ? 1 : 0.94)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hub.isPlaying)
+        TrackArt(title: hub.current?.title ?? "REPS",
+                 mediaID: hub.current?.mediaID,
+                 size: side,
+                 corner: 8)
+            .shadow(color: .black.opacity(0.28), radius: 22, y: 14)
+            .scaleEffect(hub.isPlaying ? 1 : 0.95)
+            .animation(.spring(response: 0.42, dampingFraction: 0.82), value: hub.isPlaying)
     }
 
-    // MARK: 歌名（Apple Music 是左对齐，贴着封面左边）
+    // MARK: 歌名 / 艺人（Apple Music 都是左对齐，贴封面左边）
 
     private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 3) {
             Text(hub.current?.title ?? "没有正在播放的音乐")
-                .font(.system(size: 22, weight: .bold))
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+
             Text(subtitleText)
-                .font(.system(size: 18))
+                .font(.system(size: 20, weight: .regular))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.6)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 22)
+        .padding(.horizontal, 20)
     }
 
     private var subtitleText: String {
         guard let c = hub.current else { return "" }
-        let artist = c.artist.isEmpty ? c.subtitle : c.artist
-        return hub.isPlayingFullVersion ? artist + " · 完整版" : artist
+        return c.artist.isEmpty ? (c.subtitle) : c.artist
     }
 
     // MARK: 进度
 
     private var progress: some View {
-        VStack(spacing: 6) {
-            SlimBar(progress: progressRatio,
-                    onScrub: { v in scrub = v * max(1, hub.duration) },
-                    onCommit: { v in
-                        hub.seek(to: v * max(1, hub.duration))
-                        scrub = nil
-                    },
-                    trackHeight: 5)
+        VStack(spacing: 5) {
+            GlassBar(progress: progressRatio,
+                     onScrub: { v in scrub = v * max(1, hub.duration) },
+                     onCommit: { v in
+                         hub.seek(to: v * max(1, hub.duration))
+                         scrub = nil
+                     },
+                     trackHeight: 8)
 
             HStack(spacing: 0) {
                 Text(MusicHub.formatTime(elapsed))
@@ -888,7 +867,7 @@ struct NowPlayingView: View {
             .monospacedDigit()
             .foregroundColor(.secondary)
         }
-        .padding(.horizontal, 22)
+        .padding(.horizontal, 20)
     }
 
     private var progressRatio: Double {
@@ -903,8 +882,8 @@ struct NowPlayingView: View {
 
     // MARK: 播放控制
     //
-    // Apple Music 是「随机 / 上一首 / 播放 / 下一首 / 循环」五个图标，
-    // 这里把「随机」换成「播放列表」，其余位置、大小照抄（无圆形底，纯图标）。
+    // Apple Music 是「随机 / 上一首 / 播放 / 下一首 / 循环」，
+    // 这里第一个换成「播放列表」（用户要的），位置和尺寸保持一致：纯图标、无圆底。
 
     private var controls: some View {
         HStack(spacing: 0) {
@@ -912,9 +891,9 @@ struct NowPlayingView: View {
                 showQueue = true
             } label: {
                 Image(systemName: "list.bullet")
-                    .font(.system(size: 20, weight: .regular))
+                    .font(.system(size: 19, weight: .regular))
                     .foregroundColor(.primary)
-                    .frame(width: 48, height: 48)
+                    .frame(width: 46, height: 46)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -925,9 +904,9 @@ struct NowPlayingView: View {
                 hub.previous()
             } label: {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 26))
+                    .font(.system(size: 27))
                     .foregroundColor(.primary)
-                    .frame(width: 56, height: 56)
+                    .frame(width: 54, height: 54)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -938,18 +917,18 @@ struct NowPlayingView: View {
                 Image(systemName: hub.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 42))
                     .foregroundColor(.primary)
-                    .frame(width: 76, height: 56)
+                    .frame(width: 76, height: 54)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(ScaleButtonStyle(scale: 0.92))
+            .buttonStyle(ScaleButtonStyle(scale: 0.9))
 
             Button {
                 hub.next(userInitiated: true)
             } label: {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 26))
+                    .font(.system(size: 27))
                     .foregroundColor(.primary)
-                    .frame(width: 56, height: 56)
+                    .frame(width: 54, height: 54)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -960,29 +939,29 @@ struct NowPlayingView: View {
                 hub.cycleRepeatMode()
             } label: {
                 Image(systemName: hub.repeatMode.symbol)
-                    .font(.system(size: 20, weight: .regular))
+                    .font(.system(size: 19, weight: .regular))
                     .foregroundColor(hub.repeatMode.isOn ? .accentColor : .primary)
-                    .frame(width: 48, height: 48)
+                    .frame(width: 46, height: 46)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, 22)
     }
 
     // MARK: 系统音量
 
     private var volume: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 9) {
             Image(systemName: "speaker.fill")
-                .font(.system(size: 9))
+                .font(.system(size: 10))
                 .foregroundColor(.secondary)
-            VolumeBar()
+            VolumeBar(trackHeight: 8)
             Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 9))
+                .font(.system(size: 10))
                 .foregroundColor(.secondary)
         }
-        .padding(.horizontal, 26)
+        .padding(.horizontal, 22)
     }
 
     // MARK: 底部训练状态（顶掉 Apple Music 的歌词 / 待播 / AirPlay）
@@ -1104,21 +1083,9 @@ struct QueueSheet: View {
                             hub.jump(to: i)
                         } label: {
                             HStack(spacing: 10) {
-                                Group {
-                                    if let u = item.artworkURL {
-                                        AsyncImage(url: u) { phase in
-                                            if case .success(let img) = phase {
-                                                img.resizable().aspectRatio(contentMode: .fill)
-                                            } else {
-                                                AlbumArt(title: item.title, size: 40)
-                                            }
-                                        }
-                                    } else {
-                                        AlbumArt(title: item.title, size: 40)
-                                    }
-                                }
-                                .frame(width: 40, height: 40)
-                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                                TrackArt(title: item.title,
+                                         mediaID: item.mediaID,
+                                         size: 40)
 
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.title)
@@ -1156,18 +1123,21 @@ struct QueueSheet: View {
     }
 }
 
-// MARK: - 细条进度/音量控件
+// MARK: - 玻璃进度条 / 音量条
 //
-// 和 Apple Music 一样：静态时只有一条 4pt 的线，按住拖动时把手才浮出来。
-// 命中区域仍是 18pt 高，手指不用瞄得很准。
+// 照 Apple Music 的观感做：8pt 厚的胶囊条，浅灰半透明轨道 +
+// 已播放段是白色（深色模式）/ 近黑（浅色模式），0.5pt 高光描边 + 轻微外发光，
+// 看起来像一根磨过的玻璃条，而不是系统 Slider 那种塑料件。
+// 没有圆点把手（按住任意位置拖，命中区 26pt），拖动时按下位置跟手。
 
-struct SlimBar: View {
+struct GlassBar: View {
     var progress: Double
     var onScrub: (Double) -> Void = { _ in }
     var onCommit: (Double) -> Void = { _ in }
-    var trackHeight: CGFloat = 4
+    var trackHeight: CGFloat = 8
     var enabled: Bool = true
 
+    @Environment(\.colorScheme) private var scheme
     @State private var dragging = false
     @State private var local: Double = 0
 
@@ -1177,21 +1147,40 @@ struct SlimBar: View {
             let p = CGFloat(min(max(dragging ? local : progress, 0), 1))
 
             ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.primary.opacity(0.14))
+                // 轨道：玻璃槽
+                Capsule(style: .continuous)
+                    .fill(Color.primary.opacity(scheme == .dark ? 0.16 : 0.12))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45),
+                                          lineWidth: 0.5)
+                    )
                     .frame(height: trackHeight)
 
-                Capsule()
-                    .fill(Color.primary.opacity(0.78))
-                    .frame(width: max(0, w * p), height: trackHeight)
+                // 已播放段：白 / 深灰玻璃
+                Capsule(style: .continuous)
+                    .fill(fillColor)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.55 : 0.30),
+                                          lineWidth: 0.5)
+                    )
+                    .frame(height: trackHeight)
+                    .mask(alignment: .leading) {
+                        Rectangle().frame(width: w * p)
+                    }
+                    .shadow(color: fillColor.opacity(0.35), radius: 4, y: 0)
             }
-            .frame(width: w, height: 18)
+            .frame(width: w, height: max(trackHeight, 26))
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
                         guard enabled else { return }
-                        dragging = true
+                        if !dragging {
+                            dragging = true
+                            UISelectionFeedbackGenerator().selectionChanged()
+                        }
                         let t = min(max(v.location.x / w, 0), 1)
                         local = t
                         onScrub(t)
@@ -1205,14 +1194,22 @@ struct SlimBar: View {
                     }
             )
         }
-        .frame(height: 18)
+        .frame(height: max(trackHeight, 26))
         .opacity(enabled ? 1 : 0.4)
+    }
+
+    private var fillColor: Color {
+        scheme == .dark
+            ? Color.white.opacity(0.92)
+            : Color(white: 0.12).opacity(0.86)
     }
 }
 
 // MARK: - 系统音量条
 
 struct VolumeBar: View {
+    var trackHeight: CGFloat = 8
+
     @State private var level: Double = SystemVolume.shared.level
     @State private var dragging = false
     @State private var local: Double = 0
@@ -1220,19 +1217,19 @@ struct VolumeBar: View {
     private let ticker = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        SlimBar(progress: dragging ? local : level,
-                onScrub: { v in
-                    dragging = true
-                    local = v
-                    SystemVolume.shared.set(v)
-                },
-                onCommit: { v in
-                    local = v
-                    level = v
-                    dragging = false
-                    SystemVolume.shared.set(v)
-                },
-                trackHeight: 4)
+        GlassBar(progress: dragging ? local : level,
+                 onScrub: { v in
+                     dragging = true
+                     local = v
+                     SystemVolume.shared.set(v)
+                 },
+                 onCommit: { v in
+                     local = v
+                     level = v
+                     dragging = false
+                     SystemVolume.shared.set(v)
+                 },
+                 trackHeight: trackHeight)
             .onReceive(ticker) { _ in
                 guard !dragging else { return }
                 let v = SystemVolume.shared.level
@@ -1296,32 +1293,6 @@ final class SystemVolume {
     }
 }
 
-
-// MARK: - 资料库封面
-
-/// 从 MPMediaItem 里取封面。取图是同步的，所以放到每行出现时再做，滚动不卡。
-struct MediaArtwork: View {
-    let item: MPMediaItem
-    var size: CGFloat
-    @State private var image: UIImage?
-
-    var body: some View {
-        ZStack {
-            AlbumArt(title: item.title ?? "", size: size)
-            if let image = image {
-                Image(uiImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            }
-        }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 0.08, style: .continuous))
-        .task(id: item.persistentID) {
-            guard image == nil else { return }
-            image = item.artwork?.image(at: CGSize(width: size * 3, height: size * 3))
-        }
-    }
-}
 
 // MARK: - 抽象封面
 
