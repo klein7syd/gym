@@ -1,4 +1,4 @@
-# REPS iOS · 4.1.0
+# REPS iOS · 4.1.1
 
 纯 SwiftUI 原生 App（不是网页壳），源码在 `ios/REPS/`，由 GitHub Actions 在 macOS 上编译成未签名 IPA。
 
@@ -9,10 +9,10 @@
 **下载（免登录直链）**
 
 ```
-https://github.com/klein7syd/gym/releases/download/v4.1.0/REPS-4.1.0-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.1.1/REPS-4.1.1-unsigned.ipa
 ```
 
-Release 页：https://github.com/klein7syd/gym/releases/tag/v4.1.0
+Release 页：https://github.com/klein7syd/gym/releases/tag/v4.1.1
 
 **签名（Windows 上用 Sideloadly）**
 
@@ -46,19 +46,26 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.1.0
 
 资料库匹配是规范化的：`稻香 (Live)`、`稻香 - Remastered`、`Song feat. XX` 都能对上资料库里的 `稻香` / `Song`。
 
-### 2. 播放页重排
+### 2. 播放页按 Apple Music 重排
 
-- **整体上移收紧**：封面 300pt → 最多 244pt，段间距压到 8–12pt，中间区域可滚动，小屏（SE）也不会把控件挤出屏幕
-- **音量条**：`MPVolumeView` 包装进 SwiftUI，控制的是设备真实音量，和侧边键完全同步（iOS 不允许直接改 `outputVolume`，这是唯一合法做法）
-- **循环方式**：三态按钮，不循环 → 列表循环 → 单曲循环，和系统播放器的 `repeatMode` 双向同步
+- **进度条 / 音量条都是自绘 4pt 细条**（`SlimBar`）：静态时只有一条线，按住拖动时 12pt 圆点把手才浮出来，点哪儿跳哪儿，命中区仍是 18pt 高。不再用系统 `Slider` 那个大白把手
+- **时间显示**：`已播放 / -剩余`，跟 Apple Music 一致
+- **顶部**：左侧收起、中间「正在播放」、右侧更多，三者居中对齐，去掉了两行叠字和玻璃圆底
+- **封面**：按剩余高度自适应（最大 336），下面歌名 / 进度 / 控制 / 音量沿中轴排，间距 10–14pt，音量条与底部训练条之间不再留大片空白
+- **音量条**：拖动的是设备真实系统音量（`MPVolumeView` 内部 `UISlider` 读写），和侧边键完全同步；iOS 不允许直接改 `outputVolume`
+- **循环方式**：三态，不循环 → 列表循环 → 单曲循环，与系统播放器 `repeatMode` 双向同步
 - **播放列表**：当前队列全量列出，点歌直接跳，当前项高亮
 - **底部训练状态**：当前动作、第几组、上一组「重量 × 次数」、休息倒计时环 + `+30` / `跳过`——数据源就是训练页那个 `RestTimer`，两边永远一致
 
-### 3. 底部栏系统原生
+### 3. 视觉：全局去掉渐变
+
+页面底色改成纯色 `systemGroupedBackground`（原来有三团蓝绿紫柔光）；玻璃卡片的填充和描边都改成单色；折线图区域填充改成 12% 半透明纯色；没有封面时的占位图也从渐变改成纯色。整页不再发灰发紫。
+
+### 4. 底部栏系统原生
 
 `TabView` + `.tabItem`，底层就是 `UITabBar`。编译用 **iOS 26.5 SDK**，所以在手机上自动套用系统的液态玻璃外观，是系统画的，不是仿的。
 
-### 4. 身体数据可按日期补记
+### 5. 身体数据可按日期补记
 
 「我的」→「记录身体数据」：系统 `DatePicker` 选任意过去日期，填体重/体脂，保存即落点。最近 6 条可长按修改、设为曲线第 1 天、删除。
 
