@@ -68,6 +68,8 @@ final class AppleMusicService: ObservableObject {
         let title: String
         let artist: String
         let year: Int
+        /// 合辑 / 群星碟：排序时往后放，别把别人的精选集排在本人录音室专辑前面
+        let isCompilation: Bool
         let sampleID: MPMediaEntityPersistentID
         let items: [MPMediaItem]
 
@@ -219,7 +221,7 @@ final class AppleMusicService: ObservableObject {
     private static func makeAlbums(_ songs: [MPMediaItem])
         -> (byKey: [String: Album], keyByItem: [MPMediaEntityPersistentID: String], order: [String]) {
         var buckets: [String: [MPMediaItem]] = [:]
-        var info: [String: (title: String, artist: String, year: Int)] = [:]
+        var info: [String: (title: String, artist: String, year: Int, comp: Bool)] = [:]
         var keys: [MPMediaEntityPersistentID: String] = [:]
         var order: [String] = []
 
@@ -234,9 +236,12 @@ final class AppleMusicService: ObservableObject {
                 if let d = m.releaseDate {
                     year = Calendar.current.component(.year, from: d)
                 }
-                info[key] = (title.isEmpty ? "未知专辑" : title, artist, year)
+                info[key] = (title.isEmpty ? "未知专辑" : title, artist, year, false)
             }
             buckets[key]?.append(m)
+            if m.isCompilation {
+                if let cur = info[key] { info[key] = (cur.title, cur.artist, cur.year, true) }
+            }
             keys[m.persistentID] = key
         }
 
@@ -255,6 +260,7 @@ final class AppleMusicService: ObservableObject {
                                 title: meta.title,
                                 artist: meta.artist,
                                 year: meta.year,
+                                isCompilation: meta.comp,
                                 sampleID: sorted.first?.persistentID ?? 0,
                                 items: sorted)
         }
@@ -270,7 +276,7 @@ final class AppleMusicService: ObservableObject {
 
     /// 把一批搜索结果按专辑归并，顺序按「第一次出现的先后」，
     /// 这样相关性高的专辑自然排在前面。
-    func albums(from hits: [MPMediaItem]) -> [Album] {
+    func albums(from hits: [MPMediaItem], matching rawQuery: String = "") -> [Album] {
         var seen = Set<String>()
         var out: [Album] = []
         for m in hits {
@@ -278,7 +284,38 @@ final class AppleMusicService: ObservableObject {
                   let a = albumByKey[key] else { continue }
             if seen.insert(key).inserted { out.append(a) }
         }
-        return out
+        guard !out.isEmpty else { return out }
+
+        // 排序权重（越小越靠前）：
+        //   本人专辑 > 合辑/群星碟 > 只在里面 feats 一句的别人专辑；
+        //   再按「曲目多少」区分正式录音室专辑和单曲/EP；最后新的靠前一点。
+        // 分数相同就保持搜索结果的相关度顺序，不把高相关的专辑挤下去。
+        let q = Self.normalize(rawQuery)
+        let various = Self.normalize("Various Artists")
+
+        var scored: [(score: Int, order: Int, album: Album)] = []
+        for (i, a) in out.enumerated() {
+            let artist = Self.normalize(a.artist)
+            var score = 0
+
+            if !q.isEmpty, !artist.isEmpty,
+               artist.contains(q) || q.contains(artist) {
+                score -= 1000                       // 搜的就是这个艺人 → 他的专辑优先
+            }
+            if a.isCompilation || artist == various {
+                score += 400                        // 合辑往后放
+            }
+            let n = a.items.count
+            if n >= 5 { score -= 60 }                // 正式专辑（曲目多）优先于单曲/EP
+            if n >= 10 { score -= 40 }
+            if n <= 2 { score += 40 }
+            if a.year > 0 {
+                score -= min(30, max(0, a.year - 2000) / 2)   // 同年份里新专往前一点
+            }
+            scored.append((score, i, a))
+        }
+        scored.sort { $0.score != $1.score ? $0.score < $1.score : $0.order < $1.order }
+        return scored.map { $0.album }
     }
 
     /// 按 persistentID 精确取曲目：这就是「点哪首放哪首」的保证，

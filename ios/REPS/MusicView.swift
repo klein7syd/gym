@@ -212,7 +212,7 @@ struct MusicView: View {
         }
         didSearch = true
         libraryHits = am.search(q)
-        albumHits = am.albums(from: libraryHits)
+        albumHits = am.albums(from: libraryHits, matching: q)
         // 前几行的封面先排进后台，滚动时不至于一片灰
         ArtworkStore.shared.prefetch(libraryHits, side: 160, limit: 12)
     }
@@ -487,7 +487,7 @@ struct MusicView: View {
         .buttonStyle(ScaleButtonStyle())
 
         if hub.localTracks.isEmpty {
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 Image(systemName: "music.note.list")
                     .font(.system(size: 24, weight: .light))
                     .foregroundColor(.secondary)
@@ -709,17 +709,20 @@ struct AlbumDetailView: View {
                 .shadow(color: .black.opacity(0.16), radius: 18, y: 10)
 
             VStack(spacing: 3) {
-                Text(a.displayArtist)
-                    .font(.system(size: 20, weight: .bold))
+                // Apple Music 的顺序：大字是**专辑名**，小字才是「艺人 · 年份」
+                Text(a.title)
+                    .font(.system(size: 21, weight: .bold))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
-                Text([a.title, a.year > 0 ? "\(a.year) 年" : ""]
+
+                Text([a.displayArtist, a.year > 0 ? "\(a.year) 年" : ""]
                         .filter { !$0.isEmpty }
                         .joined(separator: " · "))
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
+
                 Text("\(a.items.count) 首")
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
@@ -859,9 +862,13 @@ struct NowPlayingView: View {
 
     var body: some View {
         GeometryReader { geo in
+            let safe = SafeArea.insets
             // 除封面以外的固定高度（抓手 + 头部 + 标题 + 进度 + 控制 + 音量 + 训练卡）
-            let fixed: CGFloat = 412
-            let side = max(120, min(geo.size.width * 0.76, geo.size.height - fixed, 322))
+            let fixed: CGFloat = 448
+            // 铺满整屏之后高度富余，封面按屏宽 82% 走，上限 340
+            let side = max(130, min(geo.size.width * 0.82,
+                                    geo.size.height - safe.top - safe.bottom - fixed,
+                                    340))
             // 标题 / 进度 / 控制 / 音量都对齐到封面的左右边线（Apple Music 就是这个对齐）
             let pad = max(inset, (geo.size.width - side) / 2)
 
@@ -870,44 +877,47 @@ struct NowPlayingView: View {
 
                 header
 
-                Spacer(minLength: 12)
+                Spacer(minLength: 10)
 
                 cover(side: side)
 
-                Spacer(minLength: 26)
-                    .frame(height: 30)
+                Spacer(minLength: 18)
+                    .frame(height: 24)
 
                 titleBlock(pad: pad)
 
-                Spacer(minLength: 22)
-                    .frame(height: 26)
+                Spacer(minLength: 16)
+                    .frame(height: 20)
 
                 progressRow(pad: pad)
 
-                Spacer(minLength: 14)
-                    .frame(height: 20)
+                Spacer(minLength: 12)
+                    .frame(height: 18)
 
                 controls(pad: pad)
 
-                Spacer(minLength: 16)
-                    .frame(height: 22)
+                Spacer(minLength: 12)
+                    .frame(height: 18)
 
                 volume(pad: pad)
 
-                Spacer(minLength: 12)
+                Spacer(minLength: 10)
 
                 trainingBar
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
             }
+            // 忽略安全区再自己让回来：这样背景和圆角裁剪都覆盖到状态栏 / 底部横条，
+            // 不会在上下各留一条黑边
+            .padding(.top, safe.top)
+            .padding(.bottom, max(safe.bottom, 10))
             .frame(width: geo.size.width, height: geo.size.height)
         }
+        .ignoresSafeArea()
         .background { playerBackground }
         .offset(y: max(0, dragOffset))
         // 拉动时圆角随之长大，和底下的卡片形成层次
         .clipShape(RoundedRectangle(cornerRadius: min(34, dragOffset / 5), style: .continuous))
         .environment(\.colorScheme, .dark)
-        .preferredColorScheme(.dark)
         .sheet(isPresented: $showQueue) {
             QueueSheet()
         }
@@ -1051,6 +1061,7 @@ struct NowPlayingView: View {
                  corner: 8)
             .shadow(color: .black.opacity(0.30), radius: 24, y: 16)
             .animation(.easeOut(duration: 0.25), value: side)
+            .gesture(dismissDrag)
     }
 
     // MARK: 歌名 / 艺人
@@ -1058,19 +1069,21 @@ struct NowPlayingView: View {
     private func titleBlock(pad: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(hub.current?.title ?? "没有正在播放的音乐")
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: 24, weight: .semibold))
                 .foregroundColor(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
 
             Text(subtitleText)
-                .font(.system(size: 17, weight: .regular))
+                .font(.system(size: 18, weight: .regular))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, pad)
+        .contentShape(Rectangle())
+        .gesture(dismissDrag)
     }
 
     private var subtitleText: String {
@@ -1095,7 +1108,7 @@ struct NowPlayingView: View {
                 Spacer(minLength: 8)
                 Text("-" + MusicHub.formatTime(max(0, hub.duration - elapsed)))
             }
-            .font(.system(size: 11, weight: .medium))
+            .font(.system(size: 12, weight: .medium))
             .monospacedDigit()
             .foregroundColor(.secondary)
         }
@@ -1122,9 +1135,9 @@ struct NowPlayingView: View {
                 showQueue = true
             } label: {
                 Image(systemName: "list.bullet")
-                    .font(.system(size: 19, weight: .regular))
+                    .font(.system(size: 21, weight: .regular))
                     .foregroundColor(.primary)
-                    .frame(width: 46, height: 46)
+                    .frame(width: 50, height: 50)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1135,9 +1148,9 @@ struct NowPlayingView: View {
                 hub.previous()
             } label: {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 27))
+                    .font(.system(size: 30))
                     .foregroundColor(.primary)
-                    .frame(width: 54, height: 54)
+                    .frame(width: 58, height: 58)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1146,9 +1159,9 @@ struct NowPlayingView: View {
                 hub.toggle()
             } label: {
                 Image(systemName: hub.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 42))
+                    .font(.system(size: 48))
                     .foregroundColor(.primary)
-                    .frame(width: 76, height: 54)
+                    .frame(width: 84, height: 58)
                     .contentShape(Rectangle())
             }
             .buttonStyle(ScaleButtonStyle(scale: 0.9))
@@ -1157,9 +1170,9 @@ struct NowPlayingView: View {
                 hub.next(userInitiated: true)
             } label: {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 27))
+                    .font(.system(size: 30))
                     .foregroundColor(.primary)
-                    .frame(width: 54, height: 54)
+                    .frame(width: 58, height: 58)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1170,9 +1183,9 @@ struct NowPlayingView: View {
                 hub.cycleRepeatMode()
             } label: {
                 Image(systemName: hub.repeatMode.symbol)
-                    .font(.system(size: 19, weight: .regular))
+                    .font(.system(size: 21, weight: .regular))
                     .foregroundColor(hub.repeatMode.isOn ? .accentColor : .primary)
-                    .frame(width: 46, height: 46)
+                    .frame(width: 50, height: 50)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -1186,11 +1199,11 @@ struct NowPlayingView: View {
     private func volume(pad: CGFloat) -> some View {
         HStack(spacing: 9) {
             Image(systemName: "speaker.fill")
-                .font(.system(size: 10))
+                .font(.system(size: 12))
                 .foregroundColor(.secondary)
             VolumeBar(trackHeight: 8)
             Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 10))
+                .font(.system(size: 12))
                 .foregroundColor(.secondary)
         }
         .padding(.horizontal, pad)
@@ -1201,7 +1214,7 @@ struct NowPlayingView: View {
     private var trainingBar: some View {
         HStack(alignment: .center, spacing: 10) {
             if rest.isRunning {
-                MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 56)
+                MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 62)
             }
 
             Button {
@@ -1210,19 +1223,19 @@ struct NowPlayingView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 5) {
                         Image(systemName: "figure.strengthtraining.traditional")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text(store.current != nil ? "正在训练 · 第 \(setCount) 组" : "还没开始训练")
                             .font(.system(size: 11, weight: .semibold))
+                        Text(store.current != nil ? "正在训练 · 第 \(setCount) 组" : "还没开始训练")
+                            .font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundColor(.secondary)
 
                     Text(store.current != nil ? store.currentExercise.name : "打开训练面板")
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.system(size: 20, weight: .semibold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
 
                     Text(trainingDetail)
-                        .font(.system(size: 11))
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -1231,7 +1244,7 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
 
-            VStack(spacing: 7) {
+            VStack(spacing: 8) {
                 if rest.isRunning {
                     smallButton("+30") { rest.add(seconds: 30) }
                 } else {
@@ -1241,9 +1254,9 @@ struct NowPlayingView: View {
                 smallButton("跳过") { rest.skip() }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 15)
-        .glass(cornerRadius: 22)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 12)
+        .glass(cornerRadius: 24)
     }
 
     private func smallButton(_ title: String,
@@ -1251,9 +1264,9 @@ struct NowPlayingView: View {
                              action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(tint)
-                .frame(width: 54, height: 29)
+                .frame(width: 64, height: 31)
                 .background(Capsule().fill(tint.opacity(0.14)))
                 .contentShape(Capsule())
         }

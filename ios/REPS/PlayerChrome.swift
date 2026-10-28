@@ -1,4 +1,21 @@
 import SwiftUI
+import UIKit
+
+// MARK: - 安全区
+//
+// 播放页要铺满整屏（含状态栏 / 底部横条区域），所以它自己忽略安全区，
+// 再按真实安全区把内容往里让 —— 否则 `.clipShape` 会按安全区内的 frame 裁剪，
+// 上下各留一条黑边（4.7 的「重大 Bug」就是这么来的）。
+
+enum SafeArea {
+    static var insets: UIEdgeInsets {
+        let scene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first
+        let win = scene?.windows.first(where: { $0.isKeyWindow }) ?? scene?.windows.first
+        return win?.safeAreaInsets ?? UIEdgeInsets(top: 47, left: 0, bottom: 34, right: 0)
+    }
+}
 
 // MARK: - 播放页的呈现方式
 //
@@ -13,6 +30,11 @@ final class PlayerPresenter: ObservableObject {
     /// 下拉进度：0 = 完全打开，1 = 已经拉到底（松手就关）。
     /// 下层菜单靠它跟着渐进放大 / 变亮 / 变圆角，而不是等关闭动画才动一下。
     @Published var pull: CGFloat = 0
+    /// 播放页开着时把整个 App 切到深色（状态栏文字才会转白）。
+    /// 不能随手写 `.preferredColorScheme(.dark)`：那会在播放页还在滑入、菜单露在外面的
+    /// 那 0.4 秒里把整个窗口换成深色，看起来就是一整块颜色闪一下。
+    /// 所以改成「完全盖住之后再切、开始下滑之前就切回来」——两次切换都发生在被遮住的时候。
+    @Published var forceDark = false
 
     private init() {}
 
@@ -22,10 +44,15 @@ final class PlayerPresenter: ObservableObject {
         withAnimation(.spring(response: 0.46, dampingFraction: 0.90)) {
             isOpen = true
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.52) { [weak self] in
+            self?.forceDark = true
+        }
     }
 
     func close() {
         pull = 0
+        // 播放页此刻还铺满全屏，切换不可见
+        forceDark = false
         withAnimation(.spring(response: 0.40, dampingFraction: 0.92)) {
             isOpen = false
         }

@@ -85,18 +85,38 @@ struct TrackArt: View {
 
     var body: some View {
         ZStack {
-            AlbumArt(title: title, size: size)
+            placeholder
+
             if let img = image {
                 Image(uiImage: img)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
+                    .transition(.opacity)
             }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: corner ?? max(4, size * 0.08),
                                     style: .continuous))
+        // 有了新图就淡进来，别让占位色块「啪」一下换成封面
+        .animation(.easeOut(duration: 0.22), value: store.revision)
         .onAppear(perform: load)
         .onChange(of: mediaID) { _ in load() }
+    }
+
+    /// 占位：资料库曲目用**中性灰**（以前是彩色色块，翻歌时整块颜色闪一下，
+    /// 用户看到的就是「莫名其妙的色块」）；本地文件没有内嵌封面时才用彩色占位。
+    @ViewBuilder
+    private var placeholder: some View {
+        if mediaID != nil {
+            ZStack {
+                Rectangle().fill(Color(white: 0.20))
+                Image(systemName: "music.note")
+                    .font(.system(size: size * 0.16, weight: .light))
+                    .foregroundColor(.white.opacity(0.20))
+            }
+        } else {
+            AlbumArt(title: title, size: size)
+        }
     }
 
     private var image: UIImage? {

@@ -76,6 +76,8 @@ struct RootTabView: View {
                     ))
             }
         }
+        // 状态栏文字转白：只在播放页已经盖满全屏之后才切（切早了会整块闪）
+        .preferredColorScheme(player.forceDark ? ColorScheme.dark : nil)
         .onChange(of: scenePhase) { phase in
             if phase == .background {
                 Store.shared.writeNow()
