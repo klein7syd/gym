@@ -1,4 +1,4 @@
-# REPS iOS · 4.9.0
+# REPS iOS · 4.9.1
 
 纯 SwiftUI 原生 App（不是网页壳），源码在 `ios/REPS/`，由 GitHub Actions 在 macOS 上编译成未签名 IPA。
 
@@ -9,10 +9,10 @@
 **下载（免登录直链）**
 
 ```
-https://github.com/klein7syd/gym/releases/download/v4.9.0/REPS-4.9.0-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.9.1/REPS-4.9.1-unsigned.ipa
 ```
 
-Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.0
+Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.1
 
 **签名（Windows 上用 Sideloadly）**
 
@@ -26,7 +26,40 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.0
 
 ---
 
-## 二、4.9 这一版做了什么
+## 二、4.9.1 这一版做了什么
+
+### 1. CardClip 改成 mask，结构恒定（不重建视图）
+4.9.0 的 `if active { … } else { … }` 是 `_ConditionalContent`，`active` 一翻转就会把
+`content` 销毁重建 —— 根 TabView 会丢选中 tab、滚动位置、NavigationStack 路径。现在：
+
+```swift
+content.mask {
+    RoundedRectangle(cornerRadius: effectiveRadius, style: .continuous).ignoresSafeArea()
+}
+// effectiveRadius = (active && radius > 0.01) ? radius : 0
+```
+
+结构不变、只有数值在变，圆角也能被外层 `.animation(…, value: isOpen)` 连续驱动。
+用 mask 而不是 clipShape：mask 形状带 `.ignoresSafeArea()`，圆角 0 时是覆盖整屏的矩形，
+不沿安全区矩形切边，黑边修复不会回退。
+
+### 2. 播放页顺序：背景 → CardClip → offset
+遮罩盖在卡片本身，再位移，圆角才跟着卡片走。
+
+### 3. SafeArea 兜底 59 / 34
+场景优先 `foregroundActive`，窗口优先 keyWindow；取不到或首帧 `top == 0` 时回退 59/34（原来 47，且可能返回 0）。
+
+### 4. 本地曲目高亮按 id
+`hub.current?.id == track.id.uuidString`（本地 `PlayItem.id` 就是 `Track.id.uuidString`），同名歌不再一起亮。
+
+### 5. 底层色淡入 0.25s easeInOut
+
+### 已知
+关闭播放页时 `forceDark = false` 早于关闭动画，状态栏文字会在 0.4s 内变暗；最小改法是挪进 `asyncAfter(0.42)`，本版未动。
+
+---
+
+## 二·旧：4.9.0 这一版做了什么
 
 ### 上下大黑边：真正的病因
 `TabView` 和播放页都是**按安全区布局**的。里面的背景用 `ignoresSafeArea()` 能画到状态栏 /

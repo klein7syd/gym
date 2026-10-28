@@ -1,109 +1,3 @@
-===== ios/REPS/REPSApp.swift | Target：REPS | 状态：修改 =====
-import SwiftUI
-import UserNotifications
-
-@main
-struct REPSApp: App {
-    init() {
-        RestTimer.shared.requestNotificationAuthIfNeeded()
-    }
-
-    var body: some Scene {
-        WindowGroup {
-            RootTabView()
-                .onAppear { Store.shared.writeNow() }
-        }
-    }
-}
-
-/// 底部栏用系统原生的 TabView（UIKit 的 UITabBar）：
-/// 点按回弹、长按、滚动到底部再点当前页回顶、无障碍朗读、
-/// 安全区处理和玻璃材质全部交给系统，新版 iOS 上自动是新外观。
-struct RootTabView: View {
-    @Environment(\.scenePhase) private var scenePhase
-    @ObservedObject var player = PlayerPresenter.shared
-    @State private var selection = 0
-
-    var body: some View {
-        ZStack {
-            // 底层：常态用「页面同色」，不是黑色。
-            // TabView 和它里面的页面都是按安全区布局的（系统在根视图里已经替它们让开了
-            // 状态栏与底部横条）。只要这一层是黑的，任何一处没被内容盖住的安全区就会露出黑边，
-            // 所以这里铺的必须是跟页面一样的底色 —— 露出来也看不出来。
-            AppBackground()
-
-            // 播放页打开时这一层换成播放页自己的底色（深灰 #212121），当卡片堆叠的底。
-            // 用播放页同色而不是纯黑：万一播放页边缘有一点没铺到，露出来的也是同一个颜色。
-            Color(white: 0.13)
-                .opacity(player.isOpen ? 1 : 0)
-                .allowsHitTesting(false)
-
-            TabView(selection: $selection) {
-                TrainView()
-                    .tabItem {
-                        Label("训练", systemImage: "figure.strengthtraining.traditional")
-                    }
-                    .tag(0)
-
-                MusicView()
-                    .tabItem {
-                        Label("音乐", systemImage: "music.note")
-                    }
-                    .tag(1)
-
-                GrowthView()
-                    .tabItem {
-                        Label("成长", systemImage: "chart.xyaxis.line")
-                    }
-                    .tag(2)
-
-                ProfileView()
-                    .tabItem {
-                        Label("我的", systemImage: "person.crop.circle")
-                    }
-                    .tag(3)
-            }
-            .tint(.accentColor)
-            // ★ 4.9 修「一进 App 上下两条大黑边」的真正原因：
-            // 以前这里无条件套着 `.clipShape(RoundedRectangle(...))`。TabView 是按安全区
-            // 布局的，一旦套上裁剪，即使圆角是 0，也会沿「安全区矩形」硬切一刀 ——
-            // 页面延伸到状态栏 / 底部横条上的那部分（导航栏底、标签栏底）被切掉，
-            // 露出的就是底下那层，于是上下各留一条边。
-            // 现在只在播放页打开（卡片堆叠、需要圆角）时才裁，静止状态完全不裁。
-            .modifier(CardClip(active: player.isOpen, radius: 34 - 20 * player.pull))
-            // 跟着下拉进度实时变化：拉得越多，下层越接近原始大小、越亮 —— 就是「渐渐回到上一级」
-            .scaleEffect(player.isOpen ? 0.94 + 0.06 * player.pull : 1, anchor: .center)
-            .overlay {
-                Color.black
-                    .opacity(player.isOpen ? 0.42 * (1 - Double(player.pull)) : 0)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-            }
-            .allowsHitTesting(!player.isOpen)
-            .animation(.spring(response: 0.46, dampingFraction: 0.90), value: player.isOpen)
-
-            if player.isOpen {
-                NowPlayingView()
-                    .zIndex(10)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .bottom).combined(with: .opacity),
-                        removal: .move(edge: .bottom).combined(with: .opacity)
-                    ))
-            }
-        }
-        // 状态栏文字转白：只在播放页已经盖满全屏之后才切（切早了会整块闪）
-        .preferredColorScheme(player.forceDark ? ColorScheme.dark : nil)
-        .onChange(of: scenePhase) { phase in
-            if phase == .background {
-                Store.shared.writeNow()
-            }
-        }
-    }
-}
-
-// `CardClip`（只在播放页打开时才给 TabView 裁圆角）定义在 Theme.swift，
-// 播放页 NowPlayingView 用的是同一个修饰符。
-
 ===== ios/REPS/Theme.swift | Target：REPS | 状态：修改 =====
 import SwiftUI
 import UIKit
@@ -191,28 +85,40 @@ struct AppBackground: View {
 
 // MARK: - 卡片圆角裁剪（只在需要时才裁）
 
-/// 圆角裁剪必须「按需」：不裁的时候绝不能被裁。
+/// 圆角裁剪：**结构恒定，只有数值在变**。
 ///
-/// 踩过的坑（4.6 → 4.8 一直存在的「上下大黑边」）：
+/// 为什么不能直接用 `.clipShape`：
 /// SwiftUI 里凡是不 ignore 安全区的容器（TabView、NavigationStack 底下的页面、
-/// GeometryReader 也是这样）都是**按安全区布局**的。里面再放一个 `.ignoresSafeArea()`
-/// 的背景，背景是能画到状态栏和底部横条上的；可一旦在这条链路上套
+/// GeometryReader 也是这样）都是**按安全区布局**的。里面再放一个 `.ignoresSafeArea()` 的背景，
+/// 背景是能画到状态栏和底部横条上的；可一旦在这条链路上套
 /// `.clipShape(RoundedRectangle(cornerRadius: 0))`，裁剪边就是**安全区矩形**，
-/// 连圆角为 0 都会硬切一刀，把铺出去的那部分削平 —— 露出来就是底下那层黑，
-/// 表现为「一进 App 上下两条大黑边」「播放页上下两条大黑边」。
+/// 连圆角为 0 都会硬切一刀，把铺出去的那部分削平 —— 露出来就是底下那层，
+/// 表现为「一进 App 上下两条大黑边」「播放页上下两条大黑边」（4.6 → 4.8 的老 Bug）。
 ///
-/// 所以：圆角为 0（也就是不需要圆角）的时候，这个修饰符什么都不做。
+/// 为什么用 `mask` 而不是 `clipShape`：
+/// mask 里的形状带了 `.ignoresSafeArea()`，圆角为 0 时它就是一块**覆盖整屏（含状态栏与
+/// 底部横条）的矩形**，不沿安全区矩形切边，所以静止状态不可能切出黑边；
+/// 需要圆角时把半径变大，遮罩自己变成圆角矩形，一切都还在整屏范围内。
+///
+/// 为什么不能写成 `if active { … } else { … }`：
+/// 那是 `_ConditionalContent`，两个分支是不同的结构身份。`active` 一翻转，
+/// SwiftUI 会把 `content` 整个销毁重建 —— 对根 TabView 来说就是：选中的 tab 回到第一页、
+/// 各页 ScrollView 位置归零、NavigationStack 路径清空，而且过渡退化成淡入淡出而不是连续插值。
+/// 现在 `body` 永远返回同一种结构（mask 一层），`active` 只影响 `effectiveRadius` 的数值，
+/// 结构身份不变，状态不丢，圆角也能被外层 `.animation(…, value: player.isOpen)` 连续驱动。
 struct CardClip: ViewModifier {
-    /// false 时完全不裁；true 时按 `radius` 裁圆角
+    /// false 时圆角按 0 处理（遮罩=整屏矩形，等于不裁）；true 时按 `radius` 裁圆角
     var active: Bool
     var radius: CGFloat
 
-    @ViewBuilder
+    private var effectiveRadius: CGFloat {
+        (active && radius > 0.01) ? radius : 0
+    }
+
     func body(content: Content) -> some View {
-        if active && radius > 0.01 {
-            content.clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        } else {
-            content
+        content.mask {
+            RoundedRectangle(cornerRadius: effectiveRadius, style: .continuous)
+                .ignoresSafeArea()
         }
     }
 }
@@ -274,6 +180,271 @@ struct KeyboardDoneBar: ToolbarContent {
             }
             .fontWeight(.semibold)
         }
+    }
+}
+
+===== ios/REPS/PlayerChrome.swift | Target：REPS | 状态：修改 =====
+import SwiftUI
+import UIKit
+
+// MARK: - 安全区
+//
+// 播放页要铺满整屏（含状态栏 / 底部横条区域），所以它自己忽略安全区，
+// 再按真实安全区把内容往里让 —— 否则 `.clipShape` 会按安全区内的 frame 裁剪，
+// 上下各留一条黑边（4.7 的「重大 Bug」就是这么来的）。
+
+enum SafeArea {
+    /// 取不到窗口时的回退值：按灵动岛机型（top 59 / bottom 34）。
+    /// 绝不能用 0 —— 0 会让播放页内容顶到状态栏和底部横条下面。
+    private static let fallback = UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0)
+
+    static var insets: UIEdgeInsets {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        // 优先前台活跃的场景，没有再退回任意一个
+        let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
+        let win = scene?.windows.first(where: { $0.isKeyWindow }) ?? scene?.windows.first
+        // 首帧可能还没布局：top == 0 视为「拿不到」，回退到灵动岛基准值
+        guard let insets = win?.safeAreaInsets, insets.top > 0 else { return fallback }
+        return insets
+    }
+}
+
+// MARK: - 播放页的呈现方式
+//
+// 以前用 fullScreenCover：那一层是完全独立的窗口层，往下拖时下面什么都没有，
+// 露出来就是大片黑色。改成在根视图里叠一张自己管理的卡片：
+// 打开时底下的 TabView 稍微缩小并压暗，播放页从底部推上来，
+// 往下拖的时候底下的菜单一直看得见 —— 就是 iOS 那种「回到上一级」的观感。
+
+final class PlayerPresenter: ObservableObject {
+    static let shared = PlayerPresenter()
+    @Published var isOpen = false
+    /// 下拉进度：0 = 完全打开，1 = 已经拉到底（松手就关）。
+    /// 下层菜单靠它跟着渐进放大 / 变亮 / 变圆角，而不是等关闭动画才动一下。
+    @Published var pull: CGFloat = 0
+    /// 播放页开着时把整个 App 切到深色（状态栏文字才会转白）。
+    /// 不能随手写 `.preferredColorScheme(.dark)`：那会在播放页还在滑入、菜单露在外面的
+    /// 那 0.4 秒里把整个窗口换成深色，看起来就是一整块颜色闪一下。
+    /// 所以改成「完全盖住之后再切、开始下滑之前就切回来」——两次切换都发生在被遮住的时候。
+    @Published var forceDark = false
+
+    private init() {}
+
+    func open() {
+        guard !isOpen else { return }
+        pull = 0
+        withAnimation(.spring(response: 0.46, dampingFraction: 0.90)) {
+            isOpen = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.52) { [weak self] in
+            self?.forceDark = true
+        }
+    }
+
+    func close() {
+        pull = 0
+        // 播放页此刻还铺满全屏，切换不可见
+        forceDark = false
+        withAnimation(.spring(response: 0.40, dampingFraction: 0.92)) {
+            isOpen = false
+        }
+    }
+}
+
+// MARK: - 训练面板
+//
+// 从播放页的训练卡点进来。内容就是训练页那套（同一个 Store / RestTimer），
+// 只是排得更紧凑，边听歌边记组不用跳回训练页。
+
+struct TrainingSheet: View {
+    @ObservedObject var store = Store.shared
+    @ObservedObject var rest = RestTimer.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var detent: PresentationDetent = .large
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 14) {
+                    exerciseCard
+
+                    if rest.isRunning { restCard }
+
+                    HStack(spacing: 12) {
+                        StepperField(label: "重量", unit: "kg",
+                                     value: formatWeight(store.lastWeight),
+                                     onMinus: { store.setWeight(store.lastWeight - 2.5) },
+                                     onPlus: { store.setWeight(store.lastWeight + 2.5) })
+                        StepperField(label: "次数", unit: "reps",
+                                     value: "\(store.lastReps)",
+                                     onMinus: { store.setReps(store.lastReps - 1) },
+                                     onPlus: { store.setReps(store.lastReps + 1) })
+                    }
+
+                    Button {
+                        completeSet()
+                    } label: {
+                        Text("完成一组")
+                    }
+                    .buttonStyle(GlassButtonStyle(prominent: true))
+
+                    setListCard
+
+                    if store.current != nil {
+                        Button(role: .destructive) {
+                            rest.skip()
+                            store.finishSession()
+                            dismiss()
+                        } label: {
+                            Text("结束本次训练")
+                                .font(.system(size: 14, weight: .medium))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.red)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 26)
+            }
+            .background { AppBackground() }
+            .scrollDismissesKeyboard(.immediately)
+            .navigationTitle("训练")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("完成") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+            .onAppear { store.ensureSession() }
+        }
+        .presentationDetents([.medium, .large], selection: $detent)
+        .presentationDragIndicator(.visible)
+    }
+
+    // MARK: 当前动作
+
+    private var exerciseCard: some View {
+        let ex = store.currentExercise
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("当前动作")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+            Text(ex.name)
+                .font(.system(size: 20, weight: .bold))
+                .lineLimit(1)
+            HStack(spacing: 6) {
+                Text("已做 \(ex.sets.count) 组")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                if let s = ex.sets.last {
+                    Text("· 上一组 \(formatWeight(s.w)) kg × \(s.r)")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .glass(cornerRadius: 20, shadow: false)
+    }
+
+    // MARK: 休息
+
+    private var restCard: some View {
+        HStack(spacing: 14) {
+            MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 58)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("组间休息")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("结束后会自动提示")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            Spacer(minLength: 4)
+            Button {
+                rest.add(seconds: 30)
+            } label: {
+                Text("+30")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 48, height: 32)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+            }
+            .buttonStyle(ScaleButtonStyle())
+            Button {
+                rest.skip()
+            } label: {
+                Text("跳过")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .frame(width: 44, height: 32)
+            }
+            .buttonStyle(ScaleButtonStyle())
+        }
+        .padding(14)
+        .glass(cornerRadius: 20, shadow: false)
+    }
+
+    // MARK: 组列表
+
+    private var setListCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("本次记录")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            let sets = store.currentExercise.sets
+            if sets.isEmpty {
+                Text("还没有记录，调好重量和次数点「完成一组」")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+            } else {
+                ForEach(Array(sets.enumerated()), id: \.element.id) { i, s in
+                    HStack(spacing: 10) {
+                        Text("\(i + 1)")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundColor(.secondary)
+                            .frame(width: 18, alignment: .trailing)
+                        Text("\(formatWeight(s.w)) kg")
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                        Text("× \(s.r)")
+                            .font(.system(size: 13, design: .rounded))
+                            .foregroundColor(.secondary)
+                        Spacer(minLength: 4)
+                        Button {
+                            store.deleteSet(s.id)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                                .font(.system(size: 15))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .glass(cornerRadius: 20, shadow: false)
+    }
+
+    private func completeSet() {
+        _ = store.ensureSession()
+        store.logSet(weight: store.lastWeight, reps: store.lastReps)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        rest.start(seconds: store.restSeconds)
+    }
+
+    private func formatWeight(_ w: Double) -> String {
+        w.truncatingRemainder(dividingBy: 1) == 0
+            ? String(format: "%.0f", w)
+            : String(format: "%.1f", w)
     }
 }
 
@@ -810,7 +981,9 @@ struct MusicView: View {
     }
 
     private func localRow(index: Int, track: Track) -> some View {
-        let playing = hub.current?.source == .local && hub.current?.title == track.title
+        // 按 id 比较：本地曲目进队列时 PlayItem.id = Track.id.uuidString（MusicHub.localItems），
+        // 所以能精确对上；以前按歌名比，同名歌会一起高亮。
+        let playing = hub.current?.source == .local && hub.current?.id == track.id.uuidString
         return Button {
             hub.playLocal(at: index)
             player.open()
@@ -1194,11 +1367,11 @@ struct NowPlayingView: View {
         }
         .ignoresSafeArea()
         .background { playerBackground }
-        .offset(y: max(0, dragOffset))
-        // 拖动时圆角随之长大，和底下的卡片形成层次。
-        // 静止状态（圆角 0）一定不能裁 —— 裁剪边是安全区矩形，会把铺到状态栏 / 底部横条上的
-        // 液态玻璃背景切掉，上下各留一条纯黑，就是「一进播放页上下大黑边」。详见 Theme.swift。
+        // 顺序必须是「背景 → CardClip → offset」：
+        // 遮罩要盖在卡片本身上，再让整张卡片往下位移，圆角才会跟着走；
+        // 反过来（先 offset 再 mask）遮罩会留在原地，拖动时圆角跑到屏幕角落去。
         .modifier(CardClip(active: dragOffset > 0.5, radius: min(34, dragOffset / 5)))
+        .offset(y: max(0, dragOffset))
         .environment(\.colorScheme, .dark)
         .sheet(isPresented: $showQueue) {
             QueueSheet()
@@ -1855,6 +2028,115 @@ struct AlbumArt: View {
     }
 }
 
+===== ios/REPS/REPSApp.swift | Target：REPS | 状态：修改 =====
+import SwiftUI
+import UserNotifications
+
+@main
+struct REPSApp: App {
+    init() {
+        RestTimer.shared.requestNotificationAuthIfNeeded()
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            RootTabView()
+                .onAppear { Store.shared.writeNow() }
+        }
+    }
+}
+
+/// 底部栏用系统原生的 TabView（UIKit 的 UITabBar）：
+/// 点按回弹、长按、滚动到底部再点当前页回顶、无障碍朗读、
+/// 安全区处理和玻璃材质全部交给系统，新版 iOS 上自动是新外观。
+struct RootTabView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject var player = PlayerPresenter.shared
+    @State private var selection = 0
+
+    var body: some View {
+        ZStack {
+            // 底层：常态用「页面同色」，不是黑色。
+            // TabView 和它里面的页面都是按安全区布局的（系统在根视图里已经替它们让开了
+            // 状态栏与底部横条）。只要这一层是黑的，任何一处没被内容盖住的安全区就会露出黑边，
+            // 所以这里铺的必须是跟页面一样的底色 —— 露出来也看不出来。
+            AppBackground()
+
+            // 播放页打开时这一层换成播放页自己的底色（深灰 #212121），当卡片堆叠的底。
+            // 用播放页同色而不是纯黑：万一播放页边缘有一点没铺到，露出来的也是同一个颜色。
+            // 淡入用 0.25s easeInOut：和 TabView 那 0.46s 的 spring 大致同步，
+            // 避免 forceDark 已经切了深色、这一层还是浅灰的那一帧硬闪。
+            Color(white: 0.13)
+                .opacity(player.isOpen ? 1 : 0)
+                .animation(.easeInOut(duration: 0.25), value: player.isOpen)
+                .allowsHitTesting(false)
+
+            TabView(selection: $selection) {
+                TrainView()
+                    .tabItem {
+                        Label("训练", systemImage: "figure.strengthtraining.traditional")
+                    }
+                    .tag(0)
+
+                MusicView()
+                    .tabItem {
+                        Label("音乐", systemImage: "music.note")
+                    }
+                    .tag(1)
+
+                GrowthView()
+                    .tabItem {
+                        Label("成长", systemImage: "chart.xyaxis.line")
+                    }
+                    .tag(2)
+
+                ProfileView()
+                    .tabItem {
+                        Label("我的", systemImage: "person.crop.circle")
+                    }
+                    .tag(3)
+            }
+            .tint(.accentColor)
+            // ★ 4.9 修「一进 App 上下两条大黑边」的真正原因：
+            // 以前这里无条件套着 `.clipShape(RoundedRectangle(...))`。TabView 是按安全区
+            // 布局的，一旦套上裁剪，即使圆角是 0，也会沿「安全区矩形」硬切一刀 ——
+            // 页面延伸到状态栏 / 底部横条上的那部分（导航栏底、标签栏底）被切掉，
+            // 露出的就是底下那层，于是上下各留一条边。
+            // 现在只在播放页打开（卡片堆叠、需要圆角）时才裁，静止状态完全不裁。
+            .modifier(CardClip(active: player.isOpen, radius: 34 - 20 * player.pull))
+            // 跟着下拉进度实时变化：拉得越多，下层越接近原始大小、越亮 —— 就是「渐渐回到上一级」
+            .scaleEffect(player.isOpen ? 0.94 + 0.06 * player.pull : 1, anchor: .center)
+            .overlay {
+                Color.black
+                    .opacity(player.isOpen ? 0.42 * (1 - Double(player.pull)) : 0)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
+            .allowsHitTesting(!player.isOpen)
+            .animation(.spring(response: 0.46, dampingFraction: 0.90), value: player.isOpen)
+
+            if player.isOpen {
+                NowPlayingView()
+                    .zIndex(10)
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                        removal: .move(edge: .bottom).combined(with: .opacity)
+                    ))
+            }
+        }
+        // 状态栏文字转白：只在播放页已经盖满全屏之后才切（切早了会整块闪）
+        .preferredColorScheme(player.forceDark ? ColorScheme.dark : nil)
+        .onChange(of: scenePhase) { phase in
+            if phase == .background {
+                Store.shared.writeNow()
+            }
+        }
+    }
+}
+
+// `CardClip`（只在播放页打开时才给 TabView 裁圆角）定义在 Theme.swift，
+// 播放页 NowPlayingView 用的是同一个修饰符。
+
 ===== ios/project.yml | Target：REPS（工程配置） | 状态：修改 =====
 name: REPS
 
@@ -1894,8 +2176,8 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
-        MARKETING_VERSION: "4.9.0"
-        CURRENT_PROJECT_VERSION: "10"
+        MARKETING_VERSION: "4.9.1"
+        CURRENT_PROJECT_VERSION: "11"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: ""
