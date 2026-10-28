@@ -7,6 +7,8 @@ struct TrainView: View {
     @State private var showPicker = false
     @State private var showFinishAlert = false
     @State private var showDiscardAlert = false
+    /// 组间歇时长设置（Stepper）面板
+    @State private var showRestSetting = false
 
     private let restOptions = [60, 90, 120, 180]
 
@@ -15,6 +17,8 @@ struct TrainView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     exerciseCard
+
+                    restSettingRow
 
                     if rest.isRunning {
                         restCard
@@ -56,6 +60,9 @@ struct TrainView: View {
             }
             .sheet(isPresented: $showPicker) {
                 ExercisePickerView()
+            }
+            .sheet(isPresented: $showRestSetting) {
+                RestSettingSheet()
             }
             .onAppear {
                 store.ensureSession()
@@ -124,6 +131,40 @@ struct TrainView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - 组间休息设置入口
+    //
+    // 点这一行（右侧就是当前时长，如「120s」）弹出 Stepper：步长 15s、范围 15–600s，
+    // 直接写回 store.restSeconds（Store 内部会 clamp 到 15…600 并立即落盘）。
+    // 休息中它就贴在绿色倒计时圈正上方；不休息时也一直可见，方便开练前先调好。
+
+    private var restSettingRow: some View {
+        SectionCard {
+            Button {
+                showRestSetting = true
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "timer")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(RestStyle.ring)
+                    Text("组间休息")
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                    Spacer(minLength: 8)
+                    Text("\(store.restSeconds)s")
+                        .font(.system(.subheadline, design: .rounded))
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                        .foregroundColor(RestStyle.ring)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -461,5 +502,75 @@ struct MoveDetailView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - 组间歇时长设置
+
+/// 组间歇时长的 Stepper 面板：步长 15s、范围 15–600s。
+/// 每次改动立刻写回 store.restSeconds（Store 内部会 clamp 到 15…600 并 save），
+/// 所以不新增任何存储字段，杀掉 App 重开依然保持。
+struct RestSettingSheet: View {
+    @ObservedObject var store = Store.shared
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var value: Int = 120
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Text("\(value)s")
+                    .font(.system(size: 44, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(RestStyle.ring)
+
+                Stepper(value: $value, in: 15...600, step: 15) {
+                    Text("组间休息时长")
+                        .font(.subheadline)
+                }
+
+                HStack(spacing: 8) {
+                    ForEach([45, 60, 90, 120, 180], id: \.self) { s in
+                        Button {
+                            value = s
+                        } label: {
+                            Text("\(s)")
+                                .font(.system(size: 12, weight: value == s ? .semibold : .regular))
+                                .foregroundColor(value == s ? .white : .secondary)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 30)
+                                .background(
+                                    Capsule().fill(value == s
+                                                   ? RestStyle.ring
+                                                   : Color.primary.opacity(0.06))
+                                )
+                        }
+                        .buttonStyle(ScaleButtonStyle())
+                    }
+                }
+
+                Text("完成一组后按这个时长开始倒计时。改动立即保存，下次「完成一组」生效。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 18)
+            .navigationTitle("组间休息")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+            .onAppear { value = store.restSeconds }
+            .onChange(of: value) { v in
+                store.restSeconds = v
+            }
+        }
+        .presentationDetents([.height(360)])
     }
 }

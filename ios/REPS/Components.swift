@@ -149,9 +149,10 @@ struct RestRing: View {
         ZStack {
             Circle()
                 .stroke(Color(UIColor.tertiarySystemFill), lineWidth: 12)
+            // 进度弧用组间歇绿（RestStyle.ring），和训练本身的蓝色强调色区分开
             Circle()
                 .trim(from: 0, to: max(0.001, progress))
-                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 12, lineCap: .round))
+                .stroke(RestStyle.ring, style: StrokeStyle(lineWidth: 12, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(.linear(duration: 0.2), value: progress)
             VStack(spacing: 4) {
@@ -178,9 +179,10 @@ struct MiniRestRing: View {
         ZStack {
             Circle()
                 .stroke(Color(UIColor.tertiarySystemFill), lineWidth: size * 0.09)
+            // 同上：组间歇绿
             Circle()
                 .trim(from: 0, to: max(0.001, progress))
-                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: size * 0.09, lineCap: .round))
+                .stroke(RestStyle.ring, style: StrokeStyle(lineWidth: size * 0.09, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(.linear(duration: 0.2), value: progress)
             Text(text)

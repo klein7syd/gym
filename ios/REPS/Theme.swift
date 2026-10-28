@@ -13,6 +13,16 @@ enum GlassRadius {
     static let pill: CGFloat = 30
 }
 
+// MARK: - 组间歇配色
+//
+// 组间歇用绿色，和「训练」本身（accentColor 蓝）区分开：
+// 蓝 = 我在练，绿 = 我在歇。只用于休息环的进度弧，
+// 不动任何尺寸、线宽与动画参数，也不改训练页的蓝色强调色。
+
+enum RestStyle {
+    static let ring = Color.green
+}
+
 struct GlassBackgroundModifier: ViewModifier {
     @Environment(\.colorScheme) private var scheme
     var cornerRadius: CGFloat = GlassRadius.card

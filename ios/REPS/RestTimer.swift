@@ -76,6 +76,9 @@ final class RestTimer: NSObject, ObservableObject {
     }
 
     private func finish() {
+        // 先把排队中的通知撤掉：前台 tick 可能比通知触发早几十毫秒判定归零，
+        // 若不取消，稍后 App 一进后台仍会弹一条「休息结束」，等于重复提醒。
+        cancelNotification()
         endDate = nil
         stopTicking()
         UIApplication.shared.isIdleTimerDisabled = false
