@@ -1,4 +1,4 @@
-# REPS iOS · 4.9.5
+# REPS iOS · 4.9.6
 
 纯 SwiftUI 原生 App（不是网页壳），源码在 `ios/REPS/`，由 GitHub Actions 在 macOS 上编译成未签名 IPA。
 
@@ -9,10 +9,10 @@
 **下载（免登录直链）**
 
 ```
-https://github.com/klein7syd/gym/releases/download/v4.9.5/REPS-4.9.5-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.9.6/REPS-4.9.6-unsigned.ipa
 ```
 
-Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.5
+Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.6
 
 **签名（Windows 上用 Sideloadly）**
 
@@ -26,7 +26,31 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.5
 
 ---
 
-## 二、4.9.5 这一版做了什么
+## 二、4.9.6 这一版做了什么
+
+### A. 训练 / 组间歇 两阶段状态机
+`working --完成--> 记录一组 + resting --归零/跳过--> working → 下一组`。
+`RestTimer` 新增 `workStart` / `beginWork()` / `isResting`；skip() 与 finish() 末尾都 `beginWork()`。
+`RestRing` / `MiniRestRing` 加 `color` 参数：working 蓝（`WorkStyle.ring`）、resting 绿（`RestStyle.ring`）。
+训练页常驻 phaseCard（working 蓝圈本组用时，TimelineView 每秒；resting 绿圈倒计时 +「+30 秒/跳过休息」），
+主按钮按阶段切换，预设芯片删除；播放页训练卡与训练面板同规则；三处 completeSet 都 `guard !rest.isResting`。
+
+### B. 下拉灰带 + 黑圈
+根 ZStack 里那层 `Color(white: 0.13)` 没有 `ignoresSafeArea`，缩小后四周露深灰、安全区露浅灰。整层删除。
+
+### C. 滑到底跳一下
+`close()` 不再立刻 `pull = 0`，等 0.6s 关闭动画结束后再复位。
+
+### D. 键盘叠在播放器上
+`open()` / `NowPlayingView.onAppear` 收键盘；播放页与两处 MiniPlayerBar 忽略键盘安全区；
+底层 TabView 用 `accessibilityHidden`（不用 `.disabled`，否则底下按钮会变灰）。
+
+### E. 缩放过大
+`0.97 + 0.03 * pull`、`22 - 12 * pull`、压暗 `0.28 * (1 - pull)`（幅度 6% → 3%）。
+
+---
+
+## 二·旧：4.9.5 这一版做了什么
 
 ### 组间休息：绿色倒计时环 + 时长可调
 - `RestStyle.ring = Color.green`（Theme.swift）。`RestRing` / `MiniRestRing` 的**进度弧**改用它；

@@ -1,204 +1,169 @@
-REPS iOS 4.9.5（build 15）交付说明
-======================================================================
+REPS iOS 4.9.6（build 16）— 交付说明
+================================================
 
-一、安装包
-----------------------------------------------------------------------
-文件：REPS-4.9.5-unsigned.ipa
-大小：947,875 字节
-SHA256：8d4b19931b876814c998b7d70280dd48e60d2be45d02e377aa4e86b32ede8028
-MD5：98e87f72a85802e59ae14fe3f85f7703
-直链（免登录）：
-https://github.com/klein7syd/gym/releases/download/v4.9.5/REPS-4.9.5-unsigned.ipa
-
-CI：GitHub Actions run 40660672175，一次通过（macos-latest / Xcode 26.6 / iOS SDK 26.5）
-包内 Info.plist：4.9.5 / build 15，DTSDKName = iphoneos26.5
-包内二进制已确认含符号：RestStyle / RestRing / MiniRestRing / RestSettingSheet
-
-签名照旧：包是**未签名**的，需用 Sideloadly 自行签名安装。
+安装包：REPS-4.9.6-unsigned.ipa（未签名，需自行用 Sideloadly 签名）
+大小：976,092 字节
+SHA-256：fc29f328847ab7d3e285792b4121557995b7568f45eee6137606e39d14e2e7bb
+MD5：40ce565eaa09a736272a9094943775ad
+直链：https://github.com/klein7syd/gym/releases/download/v4.9.6/REPS-4.9.6-unsigned.ipa
+CI：run 40668854305（macos-latest / Xcode 26.6 / iOS SDK 26.5），一次通过
+最低系统：iOS 16.0，仅 iPhone
 
 
-二、第 0 步：现状核查（a–d 的答案）
-----------------------------------------------------------------------
+一、改了什么 / 为什么
+------------------------------------------------
 
-a. 训练主页那个「随倒计时走的圆圈」由什么驱动？
-   已经是 rest.progress —— `TrainView.restCard` 里的 `RestRing(progress: rest.progress,
-   text: rest.remainingText)`，而整个 restCard 包在 `if rest.isRunning { … }` 里。
-   不是训练计时、也不是目标时间。→ 属于**情形 A**，本轮只改颜色，不新增/覆盖任何圈。
+上一轮的 B / C / D 三块当时没有落进代码（MusicView / PlayerChrome / REPSApp 未改），
+本轮连同 A、E 一起做完，共五块。
 
-b. 三处「完成一组」是否都会 rest.start(seconds: store.restSeconds)？
-   是，三处都齐：
-     · TrainView.completeSet()（训练页「完成一组」）
-     · NowPlayingView.completeSet()（播放页训练卡的「完成」）
-     · TrainingSheet.completeSet()（训练面板的「完成一组」）
-   三者都是「ensureSession → logSet → 触觉反馈 → rest.start(seconds: store.restSeconds)」。
+A. 训练 / 组间歇 两阶段状态机
+   以前「完成」和「跳过」两个按钮同时挂着，休息时长芯片还能随时重启倒计时，阶段是混的。
+   现在改成严格两阶段：
 
-c. 休息结束的提醒 / 后台 / 回前台重算：
-   · 触觉：有（finish() 里 UINotificationFeedbackGenerator().notificationOccurred(.success)，
-     并叠加 SystemSound 1005 + kSystemSoundID_Vibrate）；
-   · 本地通知：有（RestTimer.scheduleNotification 用 UNTimeIntervalNotificationTrigger，
-     identifier = "reps.rest.finished"；REPSApp.init 里已请求授权）；
-   · 回前台：有（remaining 一直按 endDate − tick 计算，tick 由 0.2s Timer 和
-     willEnterForegroundNotification 刷新；回前台若已过期直接 finish()）。
-   本轮只补一处：finish() 里加 cancelNotification()，避免「前台已判定归零、通知才触发」
-   导致稍后再弹一条重复提醒。
+     working --「完成这一组」--> 记录一组 + resting --归零 /「跳过休息」--> working → 下一组
 
-d. store.restSeconds 在哪可以改？
-   两处已存在：
-     · 我的页 → 训练设置：60 / 90 / 120 / 180 四个预设；
-     · 训练页休息卡里：同样四个预设芯片（休息中可见）。
-   但都只有固定预设、且训练页那排只在休息中才出现。本轮**新增**训练页常驻入口 +
-   15–600s、步长 15 的 Stepper（见下）。
+   · 「完成」只在 working 出现，「跳过休息」只在 resting 出现；
+   · working 阶段既没有「跳过」，也没有手动开始休息的时长按钮；
+   · working 一律蓝（WorkStyle.ring = accentColor），resting 一律绿（RestStyle.ring）；
+   · 训练页的倒计时圈改为常驻：working 显示蓝色「本组用时」递增，resting 显示绿色倒计时；
+   · 三处「完成一组」（训练页 / 播放页训练卡 / 训练面板）都加了 guard !rest.isResting，
+     休息中记不了组；
+   · 训练页删掉了 60/90/120/180 预设芯片（点它们会重启休息，和新状态机冲突），
+     时长只在 restSettingRow 的 Stepper 里改。
 
+B. 下拉时的「灰带 + 黑圈」
+   REPSApp 的根 ZStack 里，AppBackground 之上还叠了一层 Color(white: 0.13)（播放页深灰）
+   当卡片堆叠的底。那层没有 ignoresSafeArea：页面缩小后四周露出一圈深灰，
+   上下安全区又因为它是按安全区布局的而露出浅灰 —— 就是灰带 + 黑圈，
+   与状态栏 / 电池区完全割裂。整层删除，底层只剩铺满安全区的 AppBackground。
+   顺手删掉了它那条 .opacity / .animation(.easeInOut(duration: 0.25))。
 
-三、改了什么 / 为什么
-----------------------------------------------------------------------
+C. 滑到底松手「跳一下」
+   close() 原本第一行就 pull = 0，而 pull 同时驱动下层缩放和圆角。
+   手势拉到底时 pull 约等于 1（下层几乎原样），一旦归零，下层立刻缩回最小尺寸 —— 视觉上跳一下。
+   现在 close() 不再立刻清零：让 isOpen=false 的动画从当前 pull 继续插值，
+   0.6s（spring response 0.40 已走完）后再复位；此时 isOpen 已是 false，
+   CardClip 不生效、缩放也是 1，所以这次复位看不见。⌄ 按钮与手势走同一条 close()。
 
-【1】颜色：休息绿、训练蓝
+D. 搜索键盘叠在播放器上
+   · PlayerPresenter.open() 开头 resignFirstResponder；
+   · NowPlayingView.onAppear 再收一次，并整页加 .ignoresSafeArea(.keyboard, edges: .bottom)；
+   · MusicView 与 AlbumDetailView 的 MiniPlayerBar 都加 .ignoresSafeArea(.keyboard, edges: .bottom)，
+     键盘弹起时不再把迷你播放条顶到键盘上方；
+   · 底层 TabView 在 .allowsHitTesting(!player.isOpen) 旁加了 .accessibilityHidden(player.isOpen)。
+     没有用任务书里备选的 .disabled：.disabled 会把底下所有按钮画成灰态，
+     而下拉过程中这层是看得见的，按钮会一个个变灰，副作用比收益明显。
 
-Theme.swift 新增：
-
-    enum RestStyle {
-        static let ring = Color.green
-    }
-
-- RestRing（训练页组间歇倒计时）进度弧：Color.accentColor → RestStyle.ring
-- MiniRestRing（播放页训练卡 / TrainingSheet）进度弧：Color.accentColor → RestStyle.ring
-- 底环（Color(UIColor.tertiarySystemFill)）不动；尺寸、线宽（12 / size*0.09）、
-  0.2s linear 动画全不动
-- 两个环中间的倒计时文字本来就是 .primary，不是 accentColor，按规则**未改**
-- 训练页的预设芯片、按钮、选中胶囊等 accentColor 一律未动（训练本身仍是蓝色）
-
-【2】训练页新增休息时长入口（Stepper）
-
-- 在 exerciseCard 下方加一行常驻卡片：`⏱ 组间休息 ——— 120s ›`，数字用 RestStyle.ring 绿色；
-  点整行弹出 RestSettingSheet。
-- RestSettingSheet：
-    · 大号绿色数字显示当前值；
-    · Stepper(value: $value, in: 15...600, step: 15)；
-    · 45 / 60 / 90 / 120 / 180 快捷芯片；
-    · 每次改动立刻 store.restSeconds = value（Store 内部 clamp 15…600 并 save()）。
-- 不新增任何存储字段：restSeconds 本来就在 PersistedState 里，旧存档解码缺字段默认 120
-  （Models.swift 里 (try? c.decode(Int.self, forKey: .restSeconds)) ?? 120），完全向后兼容。
-- 这行在休息中也可见，正好贴在绿色倒计时圈的正上方。
-
-【3】RestTimer.finish() 取消排队通知
-
-    private func finish() {
-        cancelNotification()   // ← 本轮新增这一行
-        endDate = nil
-        …
-    }
-
-理由：前台 tick 可能比通知触发早几十毫秒判定归零，不取消的话稍后一进后台会再弹一条。
-
-【已有，未重写】功能清单里的 1 / 2 / 4 / 5 / 6 都已经实现，只在第 4 项补了上面那一行。
-【功能对照表】
-
-  功能                                 状态    位置
-  ----------------------------------  ------  --------------------------------------------
-  1 完成一组 → 记组 + 立刻开始休息      已有    三处 completeSet
-  2 倒计时中 +30 / 跳过（三处一致）     已有    三处休息卡/训练卡
-  3 休息时长可调（15–600，步长 15）     新增    TrainView.restSettingRow + RestSettingSheet
-  4 结束触觉 + 后台本地通知             已有    RestTimer.finish / scheduleNotification
-    4' finish 时取消排队通知            新增    RestTimer.finish 第一行
-  5 剩余时间按 endDate − now            已有    RestTimer.remaining
-  6 休息中再次完成一组不叠加            已有    start() 内重建 endDate + 先取消通知 + ticker 先停
+E. 下拉缩放过大、内容挤成一坨
+   缩放 0.94 + 0.06 * pull → 0.97 + 0.03 * pull（幅度 6% → 3%），
+   圆角 34 - 20 * pull → 22 - 12 * pull，压暗 0.42 * (1 - pull) → 0.28 * (1 - pull)。
+   只动这三个值，anchor / CardClip 结构 / 动画曲线都没碰。
 
 
-四、文件变更清单
-----------------------------------------------------------------------
+二、文件变更清单
+------------------------------------------------
 
-新增文件：无
-删除文件：无
-Info.plist：未改动
-依赖：未新增
-存储结构：未改动（restSeconds 复用 PersistedState 既有字段）
-未改动：MusicView.swift、PlayerChrome.swift、REPSApp.swift、Store.swift、Models.swift、
-        以及所有既有尺寸 / 线宽 / 动画参数
+修改（8 个，无新增、无删除、无新依赖、Info.plist 未改）
 
-修改（5 个）：
-  ios/REPS/Theme.swift
-      · 新增 enum RestStyle { static let ring = Color.green }
-  ios/REPS/Components.swift
-      · RestRing 进度弧 → RestStyle.ring
-      · MiniRestRing 进度弧 → RestStyle.ring
-  ios/REPS/TrainView.swift
-      · @State showRestSetting
-      · VStack 中 exerciseCard 之后插入 restSettingRow
-      · .sheet 挂 RestSettingSheet
-      · 新增 restSettingRow 视图
-      · 文件末尾新增 struct RestSettingSheet
-  ios/REPS/RestTimer.swift
-      · finish() 首行加 cancelNotification()
-  ios/project.yml
-      · MARKETING_VERSION 4.9.4 → 4.9.5，CURRENT_PROJECT_VERSION 14 → 15
+  ios/REPS/Theme.swift         新增 enum WorkStyle { static let ring = Color.accentColor }
+  ios/REPS/RestTimer.swift     新增 workStart / beginWork() / isResting；skip()、finish() 末尾调用 beginWork()
+  ios/REPS/Components.swift    RestRing 加 caption + color 参数；MiniRestRing 加 color 参数
+  ios/REPS/TrainView.swift     restCard → 常驻 phaseCard（两阶段）；主按钮按阶段切换；
+                               删预设芯片；completeSet 加守卫；onAppear 新 session 时 beginWork
+  ios/REPS/MusicView.swift     trainingBar 改两阶段（圈常驻 + 按钮按阶段 + 文案）；
+                               completeSet 加守卫；收键盘；两处 MiniPlayerBar 忽略键盘安全区
+  ios/REPS/PlayerChrome.swift  TrainingSheet 加常驻 phaseCard（替代 restCard）+ 按阶段主按钮 + 守卫；
+                               open() 收键盘；close() 不再先清 pull，0.6s 后复位
+  ios/REPS/REPSApp.swift       删除 Color(white: 0.13) 那层；缩放/圆角/压暗三个数值；
+                               TabView 加 accessibilityHidden
+  ios/project.yml              4.9.5/15 → 4.9.6/16
+
+被删除的文件：无
 
 
-五、参数含义
-----------------------------------------------------------------------
+三、参数含义
+------------------------------------------------
 
-RestStyle.ring       组间歇专用绿；只用于两个休息环的进度弧
-Stepper 范围          15...600（秒），步长 15
-store.restSeconds     get 直读 state；set 时 clamp 到 15…600 并 save()（Store.swift）
-默认值                120（PersistedState 默认值 + 解码兜底，旧存档安全）
-rest.progress         1 − remaining/total，remaining = max(0, ceil(endDate − tick))
-rest.progress 动画    .linear(duration: 0.2)，未改
-RestRing 线宽         12；MiniRestRing 线宽 size * 0.09（62 / 58 两处调用），未改
-RestTimer tick        0.2s（RunLoop .common），另有 willEnterForeground 时刷新并补判过期
-finish()              cancelNotification → endDate=nil → 停 ticker → 恢复 idleTimer →
-                      系统音 1005 + 震动 + .success 触觉
-通知 identifier       "reps.rest.finished"（start / skip / finish 都会取消它）
+WorkStyle.ring = Color.accentColor
+    训练阶段（working）的颜色。蓝 = 我在练。
+
+RestStyle.ring = Color.green
+    组间歇（resting）的颜色。绿 = 我在歇。只用于休息圈、休息按钮、休息图标。
+
+RestTimer.workStart
+    当前这一组的开始时刻，纯内存态、不落盘。App 重启后从启动时刻算。
+
+RestTimer.beginWork()
+    把本组计时归零（workStart = now，同时刷新 tick）。
+    调用点：skip() 末尾、finish() 末尾、TrainView 新 session、三处 completeSet 新建 session 时。
+
+RestTimer.isResting == isRunning
+    working = !isResting。全工程不再直接用 isRunning 判断阶段。
+
+本组用时进度
+    elapsed = now - workStart；progress = elapsed.truncatingRemainder(dividingBy: 60) / 60
+    每满 60s 走完一圈，数字继续递增（1:23 → 2:05 …）。
+    由 TimelineView(.periodic(from: .now, by: 1)) 驱动，不新开 Timer。
+
+主按钮与阶段（对照表）
+
+  阶段      训练页主按钮              播放页训练卡右侧        训练面板主按钮
+  --------  ------------------------  ----------------------  ------------------------
+  working   蓝「完成这一组」          只有蓝「完成」          蓝「完成一组」
+  resting   绿「跳过休息」            「+30」+ 绿「跳过」     绿「跳过休息」+ 卡内「+30」
+  阶段卡内  绿圈 +「+30 秒 / 跳过休息」  ——                    绿圈 +「+30 / 跳过」
+
+fixed = 462（播放页除封面外的固定高度）
+    本轮没有改。训练卡按钮列从最多三个（31×3 + 18 = 111pt）降到最多两个（31×2 + 9 = 71pt），
+    圈一直是 62pt，文字列约 70pt，都没有超过原来的最高一档，所以预算不变。
+
+缩放 0.97 + 0.03 * pull
+    下层页面在播放页打开时缩到 97%，下拉到一半最深时回到 100%。幅度 3%。
+
+圆角 22 - 12 * pull
+    下层卡片圆角，播放页打开时 22pt，下拉越深越小，拉到底为 10pt。
+
+压暗 0.28 * (1 - pull)
+    下层压暗峰值从 0.42 降到 0.28。
+
+0.6s
+    close() 里复位 pull 的延迟，略大于关闭 spring（response 0.40）。
 
 
-六、怎么测试
-----------------------------------------------------------------------
+四、怎么测试
+------------------------------------------------
 
-① 训练页点「完成一组」
-   预期：组被记录；页面出现**绿色**倒计时圈（底环灰色不变），数字逐秒递减。
-
-② 休息中点「+30 秒」→ 再点「跳过」
-   预期：+30 让剩余时间加 30 秒且圈不重置；跳过立刻收起休息卡、恢复常态（蓝色界面）。
-
-③ 再点一次「完成一组」
-   预期：重新开始一轮倒计时（不会出现两个计时器、数字不会双倍速跳）。
-
-④ 改休息时长
-   点训练页「组间休息 120s ›」→ Stepper 调到 60 → 完成 → 点「完成一组」
-   预期：按 60s 倒计时；杀掉 App 重开，入口处仍显示 60s。
-
-⑤ 播放页训练卡 / 训练面板的休息圈
-   预期：同样是绿色，且与训练页是同一个计时器（三处数字同步）。
-
-⑥ 锁屏 / 切后台
-   开始休息 → 锁屏 30 秒 → 回来：剩余时间正确（按结束时间戳算，不是累减）。
-   再试：开始休息 → 立刻切后台 → 等到点：收到「休息结束」本地通知。
-   再试：开始休息 → 点「跳过」→ 切后台：**不应**再收到通知。
-
-⑦ 训练页完成一组 → 看绿圈 → +30 → 跳过 → 再完成一组（完整跑一遍上表 1/2/6）
-
-⑧ 改休息时长为 60s，完成一组验证（对应上表 3）
-
-⑨ 开始休息后锁屏 30 秒再回来，以及切后台等到通知（对应上表 5 / 4）
-
-⑩ 回归：训练本身的蓝色（完成一组按钮、选中胶囊、勾选图标）是否仍为蓝色，没被染绿。
+① 训练页：完成一组 → 看绿圈倒计时 → 点「+30 秒」→ 点「跳过休息」→ 看蓝圈从 0:00 重新计时；
+   再做一组，这次让它自然归零（把休息时长调到 15s 最快），确认归零后也回到蓝圈、有触觉反馈。
+② 播放页训练卡与训练面板重复 ①：打开播放页 → 底部训练卡点「完成」→ 绿圈出现，
+   和训练页读秒一致 → 直接切到训练 tab 看是否同一状态；再点开训练面板看是否同步。
+③ 休息中确认无法记组：绿圈倒计时期间，训练页主按钮是「跳过休息」而不是「完成这一组」，
+   播放页训练卡右侧没有「完成」。
+④ 播放页慢速下拉：看四周有没有黑圈 / 灰带，看页面缩小的幅度是否轻微（不应挤成一坨）。
+⑤ 下拉到底松手 / 点左上角 ⌄ 关闭：看底下页面是否连续放大，不再「跳一下」。
+⑥ 音乐页点搜索框弹出键盘 → 点迷你播放条：播放页打开时键盘应已收起；
+   播放页开着时点不到底下的搜索框。
+⑦ 深色系统模式下把 ④⑤ 重做一遍。
 
 
-七、已知限制
-----------------------------------------------------------------------
+五、已知限制
+------------------------------------------------
 
-1. **未在真机验证。** 本机 Windows，无 Mac、无 iPhone。CI 只验证了编译通过、包结构、
-   版本号 4.9.5 / 15、二进制含预期符号。请重点确认 ①②④⑤⑥。
+1. 未在真机验证。CI 只验证了编译通过、包结构、版本号 4.9.6/16、关键符号；
+   所有视觉与手势表现都需要你上机确认，重点是 ① ④ ⑤ ⑥。
 
-2. 训练页原有四个预设芯片（60/90/120/180）与新的 Stepper 并存。
-   用 Stepper 设成非预设值（如 45s、150s）时，那排芯片都不高亮 —— 功能正常，只是没有选中态。
+2. 「本组用时」不落盘：workStart 只在内存里，App 被系统杀掉重开后从启动时刻起算，
+   中场休息期间的本组用时不会保留（符合任务书「不新增持久化」）。
 
-3. 播放页训练卡里那个「\(restSeconds)s」小按钮仍然是「点一下立刻按这个时长开始休息」，
-   不是设置入口；设置入口只放在训练页（按任务书要求）。
+3. RestRing 多了一个 caption 参数（默认「休息中」）。任务书只要求加 color，
+   但 working 阶段如果沿用写死的文案，圈里会显示「休息中」——所以第二行小字也做成了参数。
 
-4. 倒计时圆圈是「进度弧从空长到满」（progress = 1 − remaining/total），
-   不是从满缩到空。这是原有表现，本轮按「已有的不要重写」未改。
+4. 训练页 restSettingRow 的图标保持绿色（休息标识），右侧「120s」数字改成 .primary：
+   训练页除休息圈 / 休息按钮 / 休息图标外不再有绿色。
 
-5. 本地通知在 App 处于前台时不会弹横幅（没有设置 UNUserNotificationCenter delegate），
-   前台靠系统音 + 震动 + 触觉反馈提醒 —— 这是原有行为。
+5. 我的页「训练设置」里原有的 4 个休息时长预设仍保留（本轮未动），
+   与训练页 Stepper 写的是同一个 store.restSeconds，两边互相同步。
 
-6. 系统音量仍 16 级、整首播放依赖资料库等既有音乐侧限制与本轮无关，未改动。
+6. 整首播放仍要求歌曲已在 Apple Music「资料库」；系统音量仍只有 16 级。
+
+7. 下拉压暗与缩放都调小了，播放页边缘的对比会比以前弱一点 —— 这是「不再挤成一坨」的代价。
