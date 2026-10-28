@@ -1,188 +1,3 @@
-===== ios/REPS/Theme.swift | Target：REPS | 状态：修改 =====
-import SwiftUI
-import UIKit
-
-// MARK: - 液态玻璃设计系统
-//
-// 目标是 iOS 新版 Liquid Glass 的观感：半透明材质 + 背景色渗透 + 镜面高光描边 +
-// 浮动柔和阴影 + 连续大圆角。用 Material 叠加自定义渐变描边实现，不依赖特定系统版本，
-// 这样既能保持观感，又能在较低系统上正常安装运行。
-
-enum GlassRadius {
-    static let card: CGFloat = 26
-    static let control: CGFloat = 18
-    static let pill: CGFloat = 30
-}
-
-struct GlassBackgroundModifier: ViewModifier {
-    @Environment(\.colorScheme) private var scheme
-    var cornerRadius: CGFloat = GlassRadius.card
-    var tint: Double = 0
-    var shadow: Bool = true
-
-    func body(content: Content) -> some View {
-        content
-            .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(.ultraThinMaterial)
-
-                    // 纯色薄涂层：不再用渐变，避免页面出现脏色过渡
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(Color.white.opacity(scheme == .dark ? 0.06 : 0.22))
-
-                    if tint > 0 {
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .fill(Color.accentColor.opacity(tint))
-                    }
-                }
-            }
-            .overlay {
-                // 单色细描边：玻璃边缘的实线，不做明暗渐变
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(scheme == .dark ? 0.14 : 0.55),
-                                  lineWidth: 1)
-            }
-            .compositingGroup()
-            .shadow(color: Color.black.opacity(shadow ? (scheme == .dark ? 0.45 : 0.10) : 0),
-                    radius: shadow ? 22 : 0,
-                    x: 0,
-                    y: shadow ? 10 : 0)
-    }
-}
-
-extension View {
-    /// 液态玻璃卡片
-    func glass(cornerRadius: CGFloat = GlassRadius.card, tint: Double = 0, shadow: Bool = true) -> some View {
-        modifier(GlassBackgroundModifier(cornerRadius: cornerRadius, tint: tint, shadow: shadow))
-    }
-
-    /// 内层玻璃（嵌套在卡片里的次级容器，不投影）
-    func glassInner(cornerRadius: CGFloat = GlassRadius.control) -> some View {
-        modifier(GlassBackgroundModifier(cornerRadius: cornerRadius, tint: 0, shadow: false))
-    }
-
-    /// 页面级点击收起键盘
-    func dismissKeyboardOnTap() -> some View {
-        simultaneousGesture(
-            TapGesture().onEnded {
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
-                                                to: nil, from: nil, for: nil)
-            }
-        )
-    }
-}
-
-// MARK: - 背景
-
-/// 纯色底：不使用任何渐变与彩色光斑，避免整页泛蓝泛紫。
-struct AppBackground: View {
-    var body: some View {
-        Color(UIColor.systemGroupedBackground)
-            .ignoresSafeArea()
-    }
-}
-
-// MARK: - 卡片圆角裁剪（只在需要时才裁）
-
-/// 圆角裁剪：**结构恒定，只有数值在变**。
-///
-/// 为什么不能直接用 `.clipShape`：
-/// SwiftUI 里凡是不 ignore 安全区的容器（TabView、NavigationStack 底下的页面、
-/// GeometryReader 也是这样）都是**按安全区布局**的。里面再放一个 `.ignoresSafeArea()` 的背景，
-/// 背景是能画到状态栏和底部横条上的；可一旦在这条链路上套
-/// `.clipShape(RoundedRectangle(cornerRadius: 0))`，裁剪边就是**安全区矩形**，
-/// 连圆角为 0 都会硬切一刀，把铺出去的那部分削平 —— 露出来就是底下那层，
-/// 表现为「一进 App 上下两条大黑边」「播放页上下两条大黑边」（4.6 → 4.8 的老 Bug）。
-///
-/// 为什么用 `mask` 而不是 `clipShape`：
-/// mask 里的形状带了 `.ignoresSafeArea()`，圆角为 0 时它就是一块**覆盖整屏（含状态栏与
-/// 底部横条）的矩形**，不沿安全区矩形切边，所以静止状态不可能切出黑边；
-/// 需要圆角时把半径变大，遮罩自己变成圆角矩形，一切都还在整屏范围内。
-///
-/// 为什么不能写成 `if active { … } else { … }`：
-/// 那是 `_ConditionalContent`，两个分支是不同的结构身份。`active` 一翻转，
-/// SwiftUI 会把 `content` 整个销毁重建 —— 对根 TabView 来说就是：选中的 tab 回到第一页、
-/// 各页 ScrollView 位置归零、NavigationStack 路径清空，而且过渡退化成淡入淡出而不是连续插值。
-/// 现在 `body` 永远返回同一种结构（mask 一层），`active` 只影响 `effectiveRadius` 的数值，
-/// 结构身份不变，状态不丢，圆角也能被外层 `.animation(…, value: player.isOpen)` 连续驱动。
-struct CardClip: ViewModifier {
-    /// false 时圆角按 0 处理（遮罩=整屏矩形，等于不裁）；true 时按 `radius` 裁圆角
-    var active: Bool
-    var radius: CGFloat
-
-    private var effectiveRadius: CGFloat {
-        (active && radius > 0.01) ? radius : 0
-    }
-
-    func body(content: Content) -> some View {
-        content.mask {
-            RoundedRectangle(cornerRadius: effectiveRadius, style: .continuous)
-                .ignoresSafeArea()
-        }
-    }
-}
-
-/// 按下去轻微缩小，抬起回弹
-struct ScaleButtonStyle: ButtonStyle {
-    var scale: CGFloat = 0.96
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? scale : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
-    }
-}
-
-// MARK: - 玻璃按钮
-
-struct GlassButtonStyle: ButtonStyle {
-    var prominent: Bool = false
-    var tint: Color = .accentColor
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundColor(prominent ? .white : .primary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 50)
-            .background {
-                if prominent {
-                    RoundedRectangle(cornerRadius: GlassRadius.control, style: .continuous)
-                        .fill(tint)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: GlassRadius.control, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8)
-                        )
-                        .shadow(color: tint.opacity(0.28), radius: 10, y: 5)
-                } else {
-                    RoundedRectangle(cornerRadius: GlassRadius.control, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: GlassRadius.control, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.35), lineWidth: 0.8)
-                        )
-                }
-            }
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
-    }
-}
-
-// MARK: - 键盘工具栏
-
-struct KeyboardDoneBar: ToolbarContent {
-    var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .keyboard) {
-            Spacer()
-            Button("完成") {
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
-                                                to: nil, from: nil, for: nil)
-            }
-            .fontWeight(.semibold)
-        }
-    }
-}
-
 ===== ios/REPS/PlayerChrome.swift | Target：REPS | 状态：修改 =====
 import SwiftUI
 import UIKit
@@ -237,14 +52,55 @@ final class PlayerPresenter: ObservableObject {
             isOpen = true
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.52) { [weak self] in
-            self?.forceDark = true
+            // 0.52s 内用户已经把它关掉了：不要再把窗口切成深色，
+            // 否则下一次打开会在「已经盖满」之前就变成深色，露出来那一下就是闪。
+            guard let self = self, self.isOpen else { return }
+            self.forceDark = true
+        }
+    }
+
+    /// 往下拖的**第一帧**：这时位移只有 8pt 左右，底下几乎还没露出来，
+    /// 在这里把窗口切回浅色谁也看不见；再晚一点（比如松手时才切），
+    /// 底下已经露出的那整页会当场由深变浅 —— 那就是「下拉时闪一下」的来源。
+    /// 用关掉动画的 Transaction：preferredColorScheme 的变化一旦被动画带，
+    /// 会变成一段 0.4s 的渐变，和手势叠在一起看更花。
+    func beginDismiss() {
+        guard forceDark else { return }
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { forceDark = false }
+    }
+
+    /// 没拖够、弹回原位：等弹回动画（response 0.34）走完再把窗口切回深色。
+    /// 回调里必须复查状态 —— 这 0.36s 内用户可能又把它关掉了，或者又开始拖了。
+    func cancelDismiss() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) { [weak self] in
+            guard let self = self, self.isOpen, self.pull == 0 else { return }
+            self.forceDark = true
         }
     }
 
     func close() {
+        guard isOpen else { return }
         pull = 0
-        // 播放页此刻还铺满全屏，切换不可见
-        forceDark = false
+        // 先把窗口切回浅色。此刻播放页还盖满全屏，切了看不见；
+        // 用 disablesAnimations 的 Transaction，理由同 beginDismiss。
+        let needFlip = forceDark
+        if needFlip {
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { forceDark = false }
+            // 让配色切换先单独渲染一帧（这一帧播放页仍盖满屏），0.05s 后再下滑
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.startDismissAnimation()
+            }
+        } else {
+            // 拖动开始时已经切过浅色了，不用再等
+            startDismissAnimation()
+        }
+    }
+
+    private func startDismissAnimation() {
         withAnimation(.spring(response: 0.40, dampingFraction: 0.92)) {
             isOpen = false
         }
@@ -265,7 +121,7 @@ struct TrainingSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 14) {
+                VStack(spacing: 16) {
                     exerciseCard
 
                     if rest.isRunning { restCard }
@@ -329,26 +185,29 @@ struct TrainingSheet: View {
 
     private var exerciseCard: some View {
         let ex = store.currentExercise
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 8) {
             Text("当前动作")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
             Text(ex.name)
                 .font(.system(size: 20, weight: .bold))
+                .lineSpacing(2)
                 .lineLimit(1)
             HStack(spacing: 6) {
                 Text("已做 \(ex.sets.count) 组")
                     .font(.system(size: 12))
+                    .lineSpacing(2)
                     .foregroundColor(.secondary)
                 if let s = ex.sets.last {
                     Text("· 上一组 \(formatWeight(s.w)) kg × \(s.r)")
                         .font(.system(size: 12))
+                        .lineSpacing(2)
                         .foregroundColor(.secondary)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
+        .padding(18)
         .glass(cornerRadius: 20, shadow: false)
     }
 
@@ -357,7 +216,7 @@ struct TrainingSheet: View {
     private var restCard: some View {
         HStack(spacing: 14) {
             MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 58)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text("组间休息")
                     .font(.system(size: 13, weight: .semibold))
                 Text("结束后会自动提示")
@@ -384,14 +243,14 @@ struct TrainingSheet: View {
             }
             .buttonStyle(ScaleButtonStyle())
         }
-        .padding(14)
+        .padding(16)
         .glass(cornerRadius: 20, shadow: false)
     }
 
     // MARK: 组列表
 
     private var setListCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("本次记录")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.secondary)
@@ -400,6 +259,7 @@ struct TrainingSheet: View {
             if sets.isEmpty {
                 Text("还没有记录，调好重量和次数点「完成一组」")
                     .font(.system(size: 12))
+                    .lineSpacing(3)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 6)
@@ -425,12 +285,12 @@ struct TrainingSheet: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 6)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
+        .padding(18)
         .glass(cornerRadius: 20, shadow: false)
     }
 
@@ -744,7 +604,7 @@ struct MusicView: View {
     /// 专辑格子：封面 + 标题 + 艺人·年份（点进去是整张专辑）
     private func albumTile(_ a: AppleMusicService.Album) -> some View {
         NavigationLink(value: a.id) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 TrackArt(title: a.title, mediaID: a.sampleID, size: tileSide, corner: 6)
                     .shadow(color: .black.opacity(0.10), radius: 8, y: 4)
 
@@ -757,6 +617,7 @@ struct MusicView: View {
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+                    .padding(.top, 2)
             }
             .frame(width: tileSide, alignment: .leading)
             .contentShape(Rectangle())
@@ -774,7 +635,7 @@ struct MusicView: View {
                 TrackArt(title: m.title ?? "未知曲目",
                          mediaID: m.persistentID,
                          size: 50)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(m.title ?? "未知曲目")
                         .font(.system(size: 15, weight: playing ? .semibold : .regular))
                         .foregroundColor(playing ? .accentColor : .primary)
@@ -797,7 +658,7 @@ struct MusicView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 11)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -990,7 +851,7 @@ struct MusicView: View {
         } label: {
             HStack(spacing: 12) {
                 AlbumArt(title: track.title, size: 46)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(track.title)
                         .font(.system(size: 15, weight: playing ? .semibold : .regular))
                         .foregroundColor(playing ? .accentColor : .primary)
@@ -1007,7 +868,7 @@ struct MusicView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 11)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1157,14 +1018,15 @@ struct AlbumDetailView: View {
     // MARK: 头部
 
     private func header(_ a: AppleMusicService.Album) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
             TrackArt(title: a.title, mediaID: a.sampleID, size: coverSide, corner: 8)
                 .shadow(color: .black.opacity(0.16), radius: 18, y: 10)
 
-            VStack(spacing: 3) {
+            VStack(spacing: 6) {
                 // Apple Music 的顺序：大字是**专辑名**，小字才是「艺人 · 年份」
                 Text(a.title)
                     .font(.system(size: 21, weight: .bold))
+                    .lineSpacing(3)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
 
@@ -1172,6 +1034,7 @@ struct AlbumDetailView: View {
                         .filter { !$0.isEmpty }
                         .joined(separator: " · "))
                     .font(.system(size: 13))
+                    .lineSpacing(2)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
@@ -1183,7 +1046,7 @@ struct AlbumDetailView: View {
             .padding(.horizontal, 24)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 12)
+        .padding(.top, 16)
     }
 
     private func actions(_ a: AppleMusicService.Album) -> some View {
@@ -1203,8 +1066,8 @@ struct AlbumDetailView: View {
             .buttonStyle(GlassButtonStyle())
         }
         .padding(.horizontal, 20)
-        .padding(.top, 20)
-        .padding(.bottom, 14)
+        .padding(.top, 22)
+        .padding(.bottom, 18)
     }
 
     // MARK: 曲目
@@ -1218,7 +1081,7 @@ struct AlbumDetailView: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
         .glass()
         .padding(.horizontal, 20)
     }
@@ -1241,6 +1104,7 @@ struct AlbumDetailView: View {
 
                 Text(m.title ?? "未知曲目")
                     .font(.system(size: 15, weight: playing ? .semibold : .regular))
+                    .lineSpacing(3)
                     .foregroundColor(playing ? .accentColor : .primary)
                     .lineLimit(2)
 
@@ -1259,7 +1123,8 @@ struct AlbumDetailView: View {
             }
             .padding(.leading, 12)
             .padding(.trailing, 14)
-            .padding(.vertical, 9)
+            .padding(.vertical, 13)
+            .frame(minHeight: 52)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -1305,6 +1170,8 @@ struct NowPlayingView: View {
     @ObservedObject var player = PlayerPresenter.shared
 
     @State private var dragOffset: CGFloat = 0
+    /// 这一轮下拉有没有已经通知过「开始关闭」（只在第一次 onChanged 里发一次）
+    @State private var dismissing = false
     @State private var showQueue = false
     @State private var showTraining = false
     /// 拖动进度条时的临时秒数（nil = 没在拖，跟随播放器）
@@ -1317,7 +1184,15 @@ struct NowPlayingView: View {
         GeometryReader { geo in
             let safe = SafeArea.insets
             // 除封面以外的固定高度（抓手 + 头部 + 标题 + 进度 + 控制 + 音量 + 训练卡）
-            let fixed: CGFloat = 448
+            //
+            // 4.9.2 由 448 加到 462，构成：标题区两行间距 +3（2→5）、
+            // 训练卡文字间距 +4（4→6，两处间隙各 +2）、训练卡上下内边距 +4（12→14）、
+            // 右侧三个小按钮间距 +2（8→9）、再留 1pt 余量。
+            // 小屏预算（side = min(宽×0.82, 高 - 上下安全区 - 462, 340)）：
+            //   iPhone SE3 375×667（安全区 20/0）→ 185pt，未触及 130 下限；
+            //   iPhone 13 mini 375×812（50/34）→ 266pt；iPhone 16（59/34）→ 297pt。
+            // 也就是说小屏上封面会变小一点，但不会被挤出屏幕（Spacer 还能再压）。
+            let fixed: CGFloat = 462
             // 铺满整屏之后高度富余，封面按屏宽 82% 走，上限 340
             let side = max(130, min(geo.size.width * 0.82,
                                     geo.size.height - safe.top - safe.bottom - fixed,
@@ -1493,8 +1368,16 @@ struct NowPlayingView: View {
                 dragOffset = h
                 // 0…1：拉到 260pt 就算到底，下层同步动
                 player.pull = min(1, h / 260)
+                // 刚拖起来（位移还只有 8pt 左右、底下几乎没露出）就把窗口切回浅色。
+                // 这一步不能等到松手：拖到一半时底下那整页已经露出来了，
+                // 那时再从深变浅，就是肉眼看到的「下拉闪一下」。
+                if h > 0 && !dismissing {
+                    dismissing = true
+                    player.beginDismiss()
+                }
             }
             .onEnded { v in
+                dismissing = false
                 let far = v.translation.height > 110 || v.predictedEndTranslation.height > 260
                 if far {
                     player.close()
@@ -1503,6 +1386,8 @@ struct NowPlayingView: View {
                         dragOffset = 0
                         player.pull = 0
                     }
+                    // 弹回原位后再把窗口切回深色（0.36s 后，弹回动画 0.34s）
+                    player.cancelDismiss()
                 }
             }
     }
@@ -1522,15 +1407,17 @@ struct NowPlayingView: View {
     // MARK: 歌名 / 艺人
 
     private func titleBlock(pad: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 5) {
             Text(hub.current?.title ?? "没有正在播放的音乐")
                 .font(.system(size: 24, weight: .semibold))
+                .lineSpacing(2)
                 .foregroundColor(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
 
             Text(subtitleText)
                 .font(.system(size: 18, weight: .regular))
+                .lineSpacing(2)
                 .foregroundColor(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -1675,7 +1562,7 @@ struct NowPlayingView: View {
             Button {
                 showTraining = true
             } label: {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 5) {
                         Image(systemName: "figure.strengthtraining.traditional")
                             .font(.system(size: 11, weight: .semibold))
@@ -1699,7 +1586,7 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
 
-            VStack(spacing: 8) {
+            VStack(spacing: 9) {
                 if rest.isRunning {
                     smallButton("+30") { rest.add(seconds: 30) }
                 } else {
@@ -1710,7 +1597,7 @@ struct NowPlayingView: View {
             }
         }
         .padding(.horizontal, 15)
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
         .glass(cornerRadius: 24)
     }
 
@@ -2118,9 +2005,11 @@ struct RootTabView: View {
             if player.isOpen {
                 NowPlayingView()
                     .zIndex(10)
+                    // 移出时只位移、不淡出：淡出会让播放页在半透明的那几帧里
+                    // 透出底下那层（深浅色交接处就会闪一下）。滑出时点一下就能盖住。
                     .transition(.asymmetric(
                         insertion: .move(edge: .bottom).combined(with: .opacity),
-                        removal: .move(edge: .bottom).combined(with: .opacity)
+                        removal: .move(edge: .bottom)
                     ))
             }
         }
@@ -2136,6 +2025,473 @@ struct RootTabView: View {
 
 // `CardClip`（只在播放页打开时才给 TabView 裁圆角）定义在 Theme.swift，
 // 播放页 NowPlayingView 用的是同一个修饰符。
+
+===== ios/REPS/TrainView.swift | Target：REPS | 状态：修改 =====
+import SwiftUI
+
+struct TrainView: View {
+    @ObservedObject var store = Store.shared
+    @ObservedObject var rest = RestTimer.shared
+
+    @State private var showPicker = false
+    @State private var showFinishAlert = false
+    @State private var showDiscardAlert = false
+
+    private let restOptions = [60, 90, 120, 180]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    exerciseCard
+
+                    if rest.isRunning {
+                        restCard
+                    }
+
+                    HStack(spacing: 12) {
+                        StepperField(label: "重量", unit: "kg",
+                                     value: formatWeight(store.lastWeight),
+                                     onMinus: { store.setWeight(store.lastWeight - 2.5) },
+                                     onPlus: { store.setWeight(store.lastWeight + 2.5) })
+                        StepperField(label: "次数", unit: "reps",
+                                     value: "\(store.lastReps)",
+                                     onMinus: { store.setReps(store.lastReps - 1) },
+                                     onPlus: { store.setReps(store.lastReps + 1) })
+                    }
+
+                    Button(action: completeSet) {
+                        Text("完成一组")
+                    }
+                    .buttonStyle(GlassButtonStyle(prominent: true))
+
+                    setListCard
+
+                    sessionFooter
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 28)
+            }
+            .background { AppBackground() }
+            .navigationTitle("训练")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showPicker = true
+                    } label: {
+                        Image(systemName: "list.bullet")
+                    }
+                }
+            }
+            .sheet(isPresented: $showPicker) {
+                ExercisePickerView()
+            }
+            .onAppear {
+                store.ensureSession()
+            }
+        }
+    }
+
+    // MARK: - 当前动作
+
+    private var exerciseCard: some View {
+        let ex = store.currentExercise
+        let last = store.lastSession(of: ex.name)
+        return SectionCard {
+            Button {
+                showPicker = true
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 9) {
+                        Text("当前动作")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(ex.name)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .lineSpacing(2)
+                            .foregroundColor(.primary)
+                        if let last = last {
+                            Text("上次 \(last.sets.count) 组 · 最重 \(formatWeight(last.maxWeight)) kg · 1RM \(String(format: "%.1f", last.bestE1RM)) kg")
+                                .font(.caption)
+                                .lineSpacing(2)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
+                            Text("还没记录过，先找能标准做 8-12 次的重量")
+                                .font(.caption)
+                                .lineSpacing(2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if (store.current?.exercises.count ?? 0) > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Array((store.current?.exercises ?? []).enumerated()), id: \.element.id) { i, e in
+                            Button {
+                                store.switchExercise(index: i)
+                            } label: {
+                                Text(e.name)
+                                    .font(.caption)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(i == (store.current?.index ?? 0)
+                                                ? Color.accentColor.opacity(0.18)
+                                                : Color(UIColor.tertiarySystemFill))
+                                    .foregroundColor(i == (store.current?.index ?? 0) ? .accentColor : .secondary)
+                                    .cornerRadius(20)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - 休息
+
+    private var restCard: some View {
+        SectionCard {
+            HStack(spacing: 16) {
+                RestRing(progress: rest.progress, text: rest.remainingText)
+                    .scaleEffect(0.62)
+                    .frame(width: 118, height: 118)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 6) {
+                        ForEach(restOptions, id: \.self) { s in
+                            Button {
+                                rest.start(seconds: s)
+                                store.restSeconds = s
+                            } label: {
+                                Text("\(s)")
+                                    .font(.system(size: 12, weight: s == rest.total ? .semibold : .regular))
+                                    .foregroundColor(s == rest.total ? .white : .secondary)
+                                    .frame(width: 38, height: 28)
+                                    .background(
+                                        Capsule().fill(s == rest.total
+                                                       ? Color.accentColor
+                                                       : Color.primary.opacity(0.06))
+                                    )
+                            }
+                            .buttonStyle(ScaleButtonStyle())
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Button {
+                            rest.add(seconds: 30)
+                        } label: {
+                            Text("+30 秒")
+                                .font(.system(size: 12, weight: .medium))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Capsule().fill(Color.primary.opacity(0.06)))
+                        }
+                        .buttonStyle(ScaleButtonStyle())
+
+                        Button {
+                            rest.skip()
+                        } label: {
+                            Text("跳过")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 7)
+                                .background(Capsule().fill(Color.primary.opacity(0.06)))
+                        }
+                        .buttonStyle(ScaleButtonStyle())
+                    }
+
+                    Text("锁屏后到点由系统通知提醒")
+                        .font(.system(size: 10))
+                        .lineSpacing(2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: - 组列表
+
+    private var setListCard: some View {
+        let ex = store.currentExercise
+        return SectionCard(title: "本次已完成 \(ex.sets.count) 组") {
+            if ex.sets.isEmpty {
+                Text("还没有记录。调好重量和次数，做完一组点上面的按钮。")
+                    .font(.subheadline)
+                    .lineSpacing(3)
+                    .foregroundColor(.secondary)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(ex.sets.enumerated()), id: \.element.id) { i, s in
+                        HStack {
+                            Text("\(i + 1)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .frame(width: 22, alignment: .leading)
+                            Text("\(formatWeight(s.w)) kg × \(s.r)")
+                                .font(.system(.body, design: .rounded))
+                                .fontWeight(.medium)
+                            Spacer()
+                            Text("1RM \(String(format: "%.1f", s.e1rm))")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Image(systemName: "checkmark")
+                                .font(.caption)
+                                .foregroundColor(.accentColor)
+                        }
+                        .padding(.vertical, 13)
+                        if i < ex.sets.count - 1 { Divider() }
+                    }
+                }
+                if let last = ex.sets.last {
+                    Button {
+                        store.deleteSet(last.id)
+                    } label: {
+                        Label("撤销上一组", systemImage: "arrow.uturn.backward")
+                            .font(.caption)
+                    }
+                    .padding(.top, 8)
+                }
+            }
+        }
+    }
+
+    // MARK: - 底部操作
+
+    private var sessionFooter: some View {
+        VStack(spacing: 10) {
+            Button {
+                showFinishAlert = true
+            } label: {
+                Text("结束训练并保存")
+            }
+            .buttonStyle(GlassButtonStyle())
+
+            if store.current != nil {
+                Button(role: .destructive) {
+                    showDiscardAlert = true
+                } label: {
+                    Text("放弃本次训练")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .alert("结束本次训练？", isPresented: $showFinishAlert) {
+            Button("保存", role: .none) {
+                rest.skip()
+                store.finishSession()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("已完成的组会写入历史，用于成长页统计。")
+        }
+        .alert("放弃本次训练？", isPresented: $showDiscardAlert) {
+            Button("放弃", role: .destructive) {
+                rest.skip()
+                store.discardSession()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("本次记录的所有组都会被删除，不可恢复。")
+        }
+    }
+
+    // MARK: - 动作
+
+    private func completeSet() {
+        _ = store.ensureSession()
+        store.logSet(weight: store.lastWeight, reps: store.lastReps)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        rest.start(seconds: store.restSeconds)
+    }
+
+    private func formatWeight(_ w: Double) -> String {
+        w.truncatingRemainder(dividingBy: 1) == 0 ? String(format: "%.0f", w) : String(format: "%.2f", w)
+    }
+}
+
+// MARK: - 动作选择
+
+struct ExercisePickerView: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var store = Store.shared
+
+    @State private var search = ""
+    @State private var group: String? = nil
+    @State private var detail: Move?
+    @State private var customName = ""
+
+    private var filtered: [Move] {
+        store.library.moves.filter { m in
+            let matchGroup = group == nil || m.g == group
+            let q = search.trimmingCharacters(in: .whitespaces)
+            let matchSearch = q.isEmpty
+                || m.n.localizedCaseInsensitiveContains(q)
+                || (m.en ?? "").localizedCaseInsensitiveContains(q)
+                || (m.mus ?? "").localizedCaseInsensitiveContains(q)
+                || (m.eq ?? "").localizedCaseInsensitiveContains(q)
+            return matchGroup && matchSearch
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            filterChip(title: "全部", selected: group == nil) { group = nil }
+                            ForEach(store.library.groups, id: \.self) { g in
+                                filterChip(title: g, selected: group == g) { group = g }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+
+                Section(header: Text("自定义动作")) {
+                    HStack {
+                        TextField("不在列表里？输入名字", text: $customName)
+                        Button("添加") {
+                            let n = customName.trimmingCharacters(in: .whitespaces)
+                            guard !n.isEmpty else { return }
+                            store.addExercise(name: n)
+                            customName = ""
+                            dismiss()
+                        }
+                        .disabled(customName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+
+                Section(header: Text("共 \(filtered.count) 个动作")) {
+                    ForEach(filtered) { m in
+                        HStack {
+                            Button {
+                                store.addExercise(name: m.n)
+                                dismiss()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(m.n).foregroundColor(.primary)
+                                    Text("\(m.g) · \(m.eq ?? "-") · \(m.p ?? "-")")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            Spacer()
+                            Button {
+                                detail = m
+                            } label: {
+                                Image(systemName: "info.circle")
+                                    .foregroundColor(.accentColor)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索动作 / 肌肉 / 器械")
+            .navigationTitle("选择动作")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+            .sheet(item: $detail) { m in
+                MoveDetailView(move: m)
+            }
+        }
+    }
+
+    private func filterChip(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(selected ? Color.accentColor : Color(UIColor.tertiarySystemFill))
+                .foregroundColor(selected ? .white : .primary)
+                .cornerRadius(18)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - 动作详情
+
+struct MoveDetailView: View {
+    let move: Move
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var store = Store.shared
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(move.n).font(.title2).fontWeight(.bold)
+                        if let en = move.en {
+                            Text(en).font(.subheadline).foregroundColor(.secondary)
+                        }
+                        Text("\(move.g) · \(move.eq ?? "-") · \(move.p ?? "-")")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        if let mus = move.mus {
+                            Text(mus).font(.subheadline)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                if let cue = move.cue, !cue.isEmpty {
+                    Section(header: Text("动作要领")) {
+                        ForEach(cue, id: \.self) { Text($0).font(.subheadline) }
+                    }
+                }
+                if let err = move.err, !err.isEmpty {
+                    Section(header: Text("常见错误")) {
+                        ForEach(err, id: \.self) {
+                            Label($0, systemImage: "exclamationmark.triangle")
+                                .font(.subheadline)
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+                if let alt = move.alt, !alt.isEmpty {
+                    Section(header: Text("替代动作")) {
+                        ForEach(alt, id: \.self) { Text($0).font(.subheadline) }
+                    }
+                }
+            }
+            .navigationTitle("动作详情")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("关闭") { dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("开始练") {
+                        store.addExercise(name: move.n)
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
 
 ===== ios/project.yml | Target：REPS（工程配置） | 状态：修改 =====
 name: REPS
@@ -2176,8 +2532,8 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
-        MARKETING_VERSION: "4.9.1"
-        CURRENT_PROJECT_VERSION: "11"
+        MARKETING_VERSION: "4.9.2"
+        CURRENT_PROJECT_VERSION: "12"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: ""

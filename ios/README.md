@@ -1,4 +1,4 @@
-# REPS iOS · 4.9.1
+# REPS iOS · 4.9.2
 
 纯 SwiftUI 原生 App（不是网页壳），源码在 `ios/REPS/`，由 GitHub Actions 在 macOS 上编译成未签名 IPA。
 
@@ -9,10 +9,10 @@
 **下载（免登录直链）**
 
 ```
-https://github.com/klein7syd/gym/releases/download/v4.9.1/REPS-4.9.1-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.9.2/REPS-4.9.2-unsigned.ipa
 ```
 
-Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.1
+Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.2
 
 **签名（Windows 上用 Sideloadly）**
 
@@ -26,7 +26,28 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.1
 
 ---
 
-## 二、4.9.1 这一版做了什么
+## 二、4.9.2 这一版做了什么
+
+### 1. 下拉 / 关闭时的深浅色闪烁
+原则：窗口配色只能在播放页仍盖满屏（位移≈0）时切换。
+- `beginDismiss()`：拖动第一帧（8pt，底下还没露出）就切回浅色，`disablesAnimations` 关掉动画；
+- `cancelDismiss()`：弹回后 0.36s 再置回深色，回调复查 `isOpen && pull == 0`；
+- `close()`：先切浅色，`asyncAfter(0.05)` 再下滑（让配色先渲染一帧）；
+- `open()`：0.52s 回调里复查 `isOpen`，防止快速开关时提前转深色；
+- 移出过渡改成 `.move(edge: .bottom)`，去掉 `.opacity` 淡出。
+
+### 2. 行距
+专辑详情（曲目行 9→13、minHeight 52、曲名行距 3；头部 12/3→16/6；按钮区 20/14→22/18；列表 4→6）、
+搜索结果行与本地行（8→11，内层 2→4）、专辑格子（6→8，副标题 +2）、
+播放页（标题 2→5 + 行距 2；训练卡 4→6、上下 12→14、小按钮 8→9；fixed 448→462）、
+训练面板（14→16、6→8、3→5、10→12、行内 2→6）、训练页（6→9、10→12、行 9→13）。
+
+### 已知
+`pull` 每帧 @Published，拖动时整个 RootTabView 会重算；优化方案（抽 CardStack 小子视图）本版未实施。
+
+---
+
+## 二·旧：4.9.1 这一版做了什么
 
 ### 1. CardClip 改成 mask，结构恒定（不重建视图）
 4.9.0 的 `if active { … } else { … }` 是 `_ConditionalContent`，`active` 一翻转就会把
