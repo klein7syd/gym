@@ -8,8 +8,8 @@ import UniformTypeIdentifiers
 // 不再把用户甩到别的 App。
 
 struct MusicView: View {
-    @ObservedObject private var hub = MusicHub.shared
-    @ObservedObject private var store = Store.shared
+    @ObservedObject var hub = MusicHub.shared
+    @ObservedObject var store = Store.shared
 
     @State private var query = ""
     @State private var results: [ITunesTrack] = []
@@ -431,8 +431,12 @@ struct MusicView: View {
 // MARK: - 底部迷你播放条
 
 struct MiniPlayerBar: View {
-    @ObservedObject private var hub = MusicHub.shared
+    @ObservedObject var hub = MusicHub.shared
     var onTap: () -> Void
+
+    init(onTap: @escaping () -> Void) {
+        self.onTap = onTap
+    }
 
     var body: some View {
         HStack(spacing: 11) {
@@ -504,7 +508,7 @@ struct MiniPlayerBar: View {
 // MARK: - 全屏播放页
 
 struct NowPlayingView: View {
-    @ObservedObject private var hub = MusicHub.shared
+    @ObservedObject var hub = MusicHub.shared
     @Environment(\.dismiss) private var dismiss
     @State private var dragOffset: CGFloat = 0
 
