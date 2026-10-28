@@ -1,4 +1,4 @@
-# REPS iOS · 4.2.0
+# REPS iOS · 4.3.0
 
 纯 SwiftUI 原生 App（不是网页壳），源码在 `ios/REPS/`，由 GitHub Actions 在 macOS 上编译成未签名 IPA。
 
@@ -9,10 +9,10 @@
 **下载（免登录直链）**
 
 ```
-https://github.com/klein7syd/gym/releases/download/v4.2.0/REPS-4.2.0-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.3.0/REPS-4.3.0-unsigned.ipa
 ```
 
-Release 页：https://github.com/klein7syd/gym/releases/tag/v4.2.0
+Release 页：https://github.com/klein7syd/gym/releases/tag/v4.3.0
 
 **签名（Windows 上用 Sideloadly）**
 
@@ -28,17 +28,18 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.2.0
 
 ## 二、这一版做了什么
 
-### 1. 音乐：Apple Music 完整版
-
-上一版只能放 30 秒试听。这一版把完整版真正打通了，走的是 **MediaPlayer** 而不是 MusicKit：
+### 1. 音乐：只搜资料库，全部完整播放
 
 | 环节 | 实现 |
 |---|---|
-| 搜索 | `ITunesAPI` → `itunes.apple.com/search`（公开接口，无需 entitlement） |
-| 完整播放 | `MPMusicPlayerController.applicationMusicPlayer` + 资料库 `MPMediaItem` |
-| 匹配 | `AppleMusicService` 把「歌名+艺人」规范化后在资料库建索引（后台队列） |
-| 试听兜底 | 资料库没有的歌，退回 `AVPlayer` 放 30 秒 `previewUrl` |
+| 搜索 | 直接查自建的资料库索引（`AppleMusicService.search`），本地实时出结果，不联网 |
+| 播放 | `MPMusicPlayerController.applicationMusicPlayer`，整首完整播放 |
+| 定位 | `persistentID` 精确寻址，点哪首放哪首，不会放成同名翻唱 |
 | 本地音乐 | 导入到 `Documents/Music`，整首播放、永久保存 |
+
+4.3 之前是「iTunes 曲库搜 + 资料库匹配」，匹配不上的歌只能 30 秒试听，还会搜出资料库外的结果 —— 现在这条路整个去掉了：**搜索范围就是你的资料库，搜到的每一首都能整首放**。想听库里没有的歌，去 Apple Music 点个「+」加进资料库即可。
+
+为什么不用 MusicKit 直接放曲库任意歌曲：需要 `com.apple.developer.musickit` entitlement，只有付费开发者账号能勾选，Sideloadly 自签一定没有。MediaPlayer 这条路只需要 `NSAppleMusicUsageDescription`，自签也能用。
 
 **为什么不用 MusicKit**：整首播放曲库任意歌曲需要 `com.apple.developer.musickit` entitlement，只有付费开发者账号在 Developer Portal 勾选后才能拿到。Sideloadly 自签的包一定没有它，调 MusicKit 必然失败——上一版的「空壳」就是这么来的。
 
@@ -68,7 +69,7 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.2.0
 - Apple Music 底部那排歌词 / 待播 / AirPlay 整排去掉，换成训练状态卡（动作、第几组、上一组重量×次数、休息环 +30/跳过）
 
 
-- **进度条 / 音量条都是自绘 4pt 细条**（`SlimBar`）：静态时只有一条线，按住拖动时 12pt 圆点把手才浮出来，点哪儿跳哪儿，命中区仍是 18pt 高。不再用系统 `Slider` 那个大白把手
+- **进度条 / 音量条都是自绘细条**（`SlimBar`）：就是一条线，没有圆点把手，按住任意位置拖动（命中区 18pt）。进度 0.1 秒推一次，1pt 1pt 走，不是台阶
 - **时间显示**：`已播放 / -剩余`，跟 Apple Music 一致
 - **顶部**：左侧收起、中间「正在播放」、右侧更多，三者居中对齐，去掉了两行叠字和玻璃圆底
 - **封面**：按剩余高度自适应（最大 336），下面歌名 / 进度 / 控制 / 音量沿中轴排，间距 10–14pt，音量条与底部训练条之间不再留大片空白
