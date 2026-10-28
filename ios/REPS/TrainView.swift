@@ -10,8 +10,6 @@ struct TrainView: View {
     /// 组间歇时长设置（Stepper）面板
     @State private var showRestSetting = false
 
-    private let restOptions = [60, 90, 120, 180]
-
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -20,9 +18,8 @@ struct TrainView: View {
 
                     restSettingRow
 
-                    if rest.isRunning {
-                        restCard
-                    }
+                    phaseCard
+                        .animation(.easeInOut(duration: 0.2), value: rest.isResting)
 
                     HStack(spacing: 12) {
                         StepperField(label: "重量", unit: "kg",
@@ -35,10 +32,8 @@ struct TrainView: View {
                                      onPlus: { store.setReps(store.lastReps + 1) })
                     }
 
-                    Button(action: completeSet) {
-                        Text("完成一组")
-                    }
-                    .buttonStyle(GlassButtonStyle(prominent: true))
+                    primaryButton
+                        .animation(.easeInOut(duration: 0.2), value: rest.isResting)
 
                     setListCard
 
@@ -65,7 +60,10 @@ struct TrainView: View {
                 RestSettingSheet()
             }
             .onAppear {
+                // 新开一次训练 = 进入 working 阶段，本组计时从 0 起
+                let hadSession = store.current != nil
                 store.ensureSession()
+                if !hadSession { rest.beginWork() }
             }
         }
     }
@@ -157,7 +155,9 @@ struct TrainView: View {
                         .font(.system(.subheadline, design: .rounded))
                         .fontWeight(.semibold)
                         .monospacedDigit()
-                        .foregroundColor(RestStyle.ring)
+                        // 只有图标用绿（休息标识），数字保持普通文字色 ——
+                        // 训练页除休息圈 / 休息按钮 / 休息图标外不应再有绿色
+                        .foregroundColor(.primary)
                     Image(systemName: "chevron.right")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.secondary)
@@ -168,67 +168,136 @@ struct TrainView: View {
         }
     }
 
-    // MARK: - 休息
+    // MARK: - 阶段卡（working 蓝 / resting 绿）
+    //
+    // 两阶段状态机：
+    //   working --「完成这一组」--> 记录一组 + resting --倒计时归零 /「跳过休息」--> working → 下一组
+    // 所以：
+    //   · 「完成」只在 working 出现；「跳过休息」只在 resting 出现；
+    //   · working 阶段既没有「跳过」，也没有手动开始休息的时长按钮（时长只在 restSettingRow 里改）；
+    //   · 圈：working 蓝色（本组用时，TimelineView 每秒刷新，不另开 Timer），resting 绿色（倒计时）。
 
-    private var restCard: some View {
+    private var phaseCard: some View {
         SectionCard {
             HStack(spacing: 16) {
-                RestRing(progress: rest.progress, text: rest.remainingText)
-                    .scaleEffect(0.62)
-                    .frame(width: 118, height: 118)
+                phaseRing
 
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 6) {
-                        ForEach(restOptions, id: \.self) { s in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(phaseTitle)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+                        Text(phaseSubtitle)
+                            .font(.caption)
+                            .lineSpacing(2)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if rest.isResting {
+                        HStack(spacing: 8) {
                             Button {
-                                rest.start(seconds: s)
-                                store.restSeconds = s
+                                rest.add(seconds: 30)
                             } label: {
-                                Text("\(s)")
-                                    .font(.system(size: 12, weight: s == rest.total ? .semibold : .regular))
-                                    .foregroundColor(s == rest.total ? .white : .secondary)
-                                    .frame(width: 38, height: 28)
-                                    .background(
-                                        Capsule().fill(s == rest.total
-                                                       ? Color.accentColor
-                                                       : Color.primary.opacity(0.06))
-                                    )
+                                Text("+30 秒")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(Capsule().fill(Color.primary.opacity(0.06)))
+                            }
+                            .buttonStyle(ScaleButtonStyle())
+
+                            Button {
+                                rest.skip()
+                            } label: {
+                                Text("跳过休息")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(Capsule().fill(Color.primary.opacity(0.06)))
                             }
                             .buttonStyle(ScaleButtonStyle())
                         }
+                        .transition(.opacity)
+
+                        Text("锁屏后到点由系统通知提醒")
+                            .font(.system(size: 10))
+                            .lineSpacing(2)
+                            .foregroundColor(.secondary)
+                            .transition(.opacity)
                     }
-
-                    HStack(spacing: 8) {
-                        Button {
-                            rest.add(seconds: 30)
-                        } label: {
-                            Text("+30 秒")
-                                .font(.system(size: 12, weight: .medium))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(Capsule().fill(Color.primary.opacity(0.06)))
-                        }
-                        .buttonStyle(ScaleButtonStyle())
-
-                        Button {
-                            rest.skip()
-                        } label: {
-                            Text("跳过")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(Capsule().fill(Color.primary.opacity(0.06)))
-                        }
-                        .buttonStyle(ScaleButtonStyle())
-                    }
-
-                    Text("锁屏后到点由系统通知提醒")
-                        .font(.system(size: 10))
-                        .lineSpacing(2)
-                        .foregroundColor(.secondary)
                 }
             }
+        }
+    }
+
+    /// 圈：resting 绿倒计时 / working 蓝本组用时。切换用 .opacity 0.2s（外层 phaseCard 上的 animation）。
+    @ViewBuilder
+    private var phaseRing: some View {
+        if rest.isResting {
+            RestRing(progress: rest.progress,
+                     text: rest.remainingText,
+                     caption: "休息中",
+                     color: RestStyle.ring)
+                .scaleEffect(0.62)
+                .frame(width: 118, height: 118)
+                .transition(.opacity)
+        } else {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                // 本组用时：workStart 是这一组的起点，elapsed 直接算差值，
+                // 不靠累加计数，锁屏回来也准
+                let elapsed = max(0, ctx.date.timeIntervalSince(rest.workStart))
+                RestRing(progress: elapsed.truncatingRemainder(dividingBy: 60) / 60,
+                         text: clockText(elapsed),
+                         caption: "本组用时",
+                         color: WorkStyle.ring)
+                    .scaleEffect(0.62)
+                    .frame(width: 118, height: 118)
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private var phaseTitle: String {
+        guard store.current != nil else { return "还没开始训练" }
+        return rest.isResting ? "组间休息" : "第 \(setCount + 1) 组 · 训练中"
+    }
+
+    private var phaseSubtitle: String {
+        guard store.current != nil else {
+            return "调好重量和次数，点下面的「完成这一组」开始第一组"
+        }
+        let target = "目标 \(formatWeight(store.lastWeight)) kg × \(store.lastReps)"
+        return rest.isResting
+            ? "下一组 \(formatWeight(store.lastWeight)) kg × \(store.lastReps)"
+            : target
+    }
+
+    private var setCount: Int {
+        store.current == nil ? 0 : store.currentExercise.sets.count
+    }
+
+    /// 底部主按钮：working 蓝「完成这一组」/ resting 绿「跳过休息」，同一时刻只出现一个。
+    @ViewBuilder
+    private var primaryButton: some View {
+        if rest.isResting {
+            Button {
+                rest.skip()
+            } label: {
+                Text("跳过休息")
+            }
+            .buttonStyle(GlassButtonStyle(prominent: true, tint: RestStyle.ring))
+            .transition(.opacity)
+        } else {
+            Button {
+                completeSet()
+            } label: {
+                Text("完成这一组")
+            }
+            .buttonStyle(GlassButtonStyle(prominent: true))
+            .transition(.opacity)
         }
     }
 
@@ -322,10 +391,20 @@ struct TrainView: View {
     // MARK: - 动作
 
     private func completeSet() {
+        // 「完成」只在 working 阶段有效：休息中不能记组
+        guard !rest.isResting else { return }
+        let hadSession = store.current != nil
         _ = store.ensureSession()
+        if !hadSession { rest.beginWork() }
         store.logSet(weight: store.lastWeight, reps: store.lastReps)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         rest.start(seconds: store.restSeconds)
+    }
+
+    /// 秒数 → m:ss（本组用时）
+    private func clockText(_ t: TimeInterval) -> String {
+        let s = max(0, Int(t))
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     private func formatWeight(_ w: Double) -> String {

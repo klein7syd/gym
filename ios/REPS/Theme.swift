@@ -23,6 +23,16 @@ enum RestStyle {
     static let ring = Color.green
 }
 
+// MARK: - 训练配色
+//
+// 训练中（working）一律用蓝色强调色，组间歇（resting）一律用 RestStyle.ring 绿。
+// 两阶段状态机：working --完成--> 记录一组 + resting --倒计时归零 / 跳过--> working …
+// 「完成」只在 working 出现，「跳过休息」只在 resting 出现。
+
+enum WorkStyle {
+    static let ring = Color.accentColor
+}
+
 struct GlassBackgroundModifier: ViewModifier {
     @Environment(\.colorScheme) private var scheme
     var cornerRadius: CGFloat = GlassRadius.card

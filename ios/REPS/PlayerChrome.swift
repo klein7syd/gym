@@ -46,6 +46,10 @@ final class PlayerPresenter: ObservableObject {
 
     func open() {
         guard !isOpen else { return }
+        // 先收键盘：键盘弹着的时候迷你播放条被顶到键盘上方，点它打开播放页，
+        // 键盘不会自己消失，会跟着播放页一起浮在下面（还能点到搜索框）。
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
         pull = 0
         withAnimation(.spring(response: 0.46, dampingFraction: 0.90)) {
             isOpen = true
@@ -102,7 +106,11 @@ final class PlayerPresenter: ObservableObject {
 
     func close() {
         guard isOpen else { return }
-        pull = 0
+        // ★ 这里**不能**立刻 pull = 0：
+        // pull 同时驱动下层的大小（0.97 + 0.03 * pull）和圆角（22 - 12 * pull）。
+        // 手势拉到底时 pull 已经接近 1，如果关闭的一瞬间把它归零，
+        // 下层会从「几乎原样」猛地缩回 0.97 的小卡片 —— 就是滑到底松手时的「跳一下」。
+        // 所以先让 isOpen=false 的动画从当前 pull 继续插值，动画结束（0.6s）后再悄悄复位。
         // 先把窗口切回浅色。此刻播放页还盖满全屏，切了看不见。
         // 然后让配色先单独渲染一帧（0.05s），再启动下滑动画 ——
         // 这样播放页滑出的整个过程里，底下露出来的都是已经切好的浅色页面。
@@ -116,6 +124,13 @@ final class PlayerPresenter: ObservableObject {
         } else {
             // 拖动开始时已经切过浅色了，不用再等
             startDismissAnimation()
+        }
+        // 关闭动画（spring response 0.40）走完之后再复位 pull。
+        // 此时 isOpen 已经是 false，CardClip 不再生效、缩放也是 1，
+        // 所以这次复位在视觉上没有作用 —— 纯粹为下一次打开准备干净的起点。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self = self, !self.isOpen else { return }
+            self.pull = 0
         }
     }
 
@@ -143,7 +158,8 @@ struct TrainingSheet: View {
                 VStack(spacing: 16) {
                     exerciseCard
 
-                    if rest.isRunning { restCard }
+                    phaseCard
+                        .animation(.easeInOut(duration: 0.2), value: rest.isResting)
 
                     HStack(spacing: 12) {
                         StepperField(label: "重量", unit: "kg",
@@ -156,12 +172,8 @@ struct TrainingSheet: View {
                                      onPlus: { store.setReps(store.lastReps + 1) })
                     }
 
-                    Button {
-                        completeSet()
-                    } label: {
-                        Text("完成一组")
-                    }
-                    .buttonStyle(GlassButtonStyle(prominent: true))
+                    primaryButton
+                        .animation(.easeInOut(duration: 0.2), value: rest.isResting)
 
                     setListCard
 
@@ -230,40 +242,110 @@ struct TrainingSheet: View {
         .glass(cornerRadius: 20, shadow: false)
     }
 
-    // MARK: 休息
+    // MARK: 阶段卡（working 蓝 / resting 绿）
+    //
+    // 和训练页同一个 RestTimer，所以阶段与读秒完全同步：
+    // working 显示蓝色「本组用时」，resting 显示绿色倒计时 + 「+30 / 跳过」。
 
-    private var restCard: some View {
+    private var phaseCard: some View {
         HStack(spacing: 14) {
-            MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 58)
+            phaseRing
+
             VStack(alignment: .leading, spacing: 5) {
-                Text("组间休息")
+                Text(phaseTitle)
                     .font(.system(size: 13, weight: .semibold))
-                Text("结束后会自动提示")
+                    .foregroundColor(.primary)
+                Text(phaseSubtitle)
                     .font(.system(size: 11))
+                    .lineSpacing(2)
                     .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 4)
-            Button {
-                rest.add(seconds: 30)
-            } label: {
-                Text("+30")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 48, height: 32)
-                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+
+            if rest.isResting {
+                // 休息中才有「+30 / 跳过」，「完成」不出现
+                Button {
+                    rest.add(seconds: 30)
+                } label: {
+                    Text("+30")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 48, height: 32)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                }
+                .buttonStyle(ScaleButtonStyle())
+                Button {
+                    rest.skip()
+                } label: {
+                    Text("跳过")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(RestStyle.ring)
+                        .frame(width: 44, height: 32)
+                }
+                .buttonStyle(ScaleButtonStyle())
             }
-            .buttonStyle(ScaleButtonStyle())
-            Button {
-                rest.skip()
-            } label: {
-                Text("跳过")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.secondary)
-                    .frame(width: 44, height: 32)
-            }
-            .buttonStyle(ScaleButtonStyle())
         }
         .padding(16)
         .glass(cornerRadius: 20, shadow: false)
+    }
+
+    @ViewBuilder
+    private var phaseRing: some View {
+        if rest.isResting {
+            MiniRestRing(progress: rest.progress, text: rest.remainingText,
+                         size: 58, color: RestStyle.ring)
+                .transition(.opacity)
+        } else {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                let elapsed = max(0, ctx.date.timeIntervalSince(rest.workStart))
+                MiniRestRing(progress: elapsed.truncatingRemainder(dividingBy: 60) / 60,
+                             text: clockText(elapsed),
+                             size: 58,
+                             color: WorkStyle.ring)
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private var phaseTitle: String {
+        guard store.current != nil else { return "还没开始训练" }
+        return rest.isResting ? "组间休息" : "第 \(setCount + 1) 组 · 训练中"
+    }
+
+    private var phaseSubtitle: String {
+        guard store.current != nil else {
+            return "调好重量和次数，点「完成一组」开始"
+        }
+        let target = "目标 \(formatWeight(store.lastWeight)) kg × \(store.lastReps)"
+        return rest.isResting
+            ? "下一组 \(formatWeight(store.lastWeight)) kg × \(store.lastReps)"
+            : target
+    }
+
+    private var setCount: Int {
+        store.current == nil ? 0 : store.currentExercise.sets.count
+    }
+
+    /// 主按钮：working 蓝「完成一组」/ resting 绿「跳过休息」，同一时刻只有一个
+    @ViewBuilder
+    private var primaryButton: some View {
+        if rest.isResting {
+            Button {
+                rest.skip()
+            } label: {
+                Text("跳过休息")
+            }
+            .buttonStyle(GlassButtonStyle(prominent: true, tint: RestStyle.ring))
+            .transition(.opacity)
+        } else {
+            Button {
+                completeSet()
+            } label: {
+                Text("完成一组")
+            }
+            .buttonStyle(GlassButtonStyle(prominent: true))
+            .transition(.opacity)
+        }
     }
 
     // MARK: 组列表
@@ -314,10 +396,20 @@ struct TrainingSheet: View {
     }
 
     private func completeSet() {
+        // 「完成」只在 working 阶段有效：休息中不能记组
+        guard !rest.isResting else { return }
+        let hadSession = store.current != nil
         _ = store.ensureSession()
+        if !hadSession { rest.beginWork() }
         store.logSet(weight: store.lastWeight, reps: store.lastReps)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         rest.start(seconds: store.restSeconds)
+    }
+
+    /// 秒数 → m:ss（本组用时）
+    private func clockText(_ t: TimeInterval) -> String {
+        let s = max(0, Int(t))
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     private func formatWeight(_ w: Double) -> String {

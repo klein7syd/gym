@@ -14,12 +14,25 @@ final class RestTimer: NSObject, ObservableObject {
     @Published private(set) var endDate: Date?
     @Published private(set) var total: Int = 120
     @Published private(set) var tick = Date()
+    /// 当前这一组「开始做」的时刻。纯内存态，不落盘（重启后按 App 启动时刻算）。
+    /// working 阶段的圈（本组用时）就靠它算 elapsed，不另开 Timer。
+    @Published private(set) var workStart = Date()
 
     private var timer: Timer?
     private let notificationID = "reps.rest.finished"
     private var didRequestAuth = false
 
     var isRunning: Bool { endDate != nil }
+
+    /// 两阶段状态机：working = !isResting，resting = isRunning。
+    var isResting: Bool { isRunning }
+
+    /// 开始做一组：把本组计时归零。skip() / finish() 末尾都会调用它，
+    /// 所以「跳过休息」「倒计时自然归零」两条路径回到 working 时本组用时都从 0:00 起。
+    func beginWork() {
+        workStart = Date()
+        tick = Date()
+    }
 
     var remaining: Int {
         guard let end = endDate else { return 0 }
@@ -73,6 +86,8 @@ final class RestTimer: NSObject, ObservableObject {
         endDate = nil
         stopTicking()
         UIApplication.shared.isIdleTimerDisabled = false
+        // 跳过休息 = 直接进入下一组的 working 阶段
+        beginWork()
     }
 
     private func finish() {
@@ -87,6 +102,8 @@ final class RestTimer: NSObject, ObservableObject {
         AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
+        // 休息自然结束 = 下一组开始，本组计时归零
+        beginWork()
     }
 
     // MARK: - 内部

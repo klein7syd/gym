@@ -25,20 +25,14 @@ struct RootTabView: View {
 
     var body: some View {
         ZStack {
-            // 底层：常态用「页面同色」，不是黑色。
-            // TabView 和它里面的页面都是按安全区布局的（系统在根视图里已经替它们让开了
-            // 状态栏与底部横条）。只要这一层是黑的，任何一处没被内容盖住的安全区就会露出黑边，
-            // 所以这里铺的必须是跟页面一样的底色 —— 露出来也看不出来。
+            // 底层只有一层：**页面同色 + 铺满安全区**。
+            //
+            // 4.9.6 之前这里还叠过一层 `Color(white: 0.13)`（播放页深灰）当卡片堆叠的底，
+            // 但那层没有 ignoresSafeArea：缩小后的页面四周就露出一圈深灰，
+            // 上下安全区又因为它是按安全区布局的而露出浅灰 —— 灰带 + 黑圈，
+            // 和状态栏 / 电池区完全割裂，下拉时特别明显。现在整层删掉，
+            // AppBackground() 自己带 ignoresSafeArea，露出来的永远是页面同色，四周接得住。
             AppBackground()
-
-            // 播放页打开时这一层换成播放页自己的底色（深灰 #212121），当卡片堆叠的底。
-            // 用播放页同色而不是纯黑：万一播放页边缘有一点没铺到，露出来的也是同一个颜色。
-            // 淡入用 0.25s easeInOut：和 TabView 那 0.46s 的 spring 大致同步，
-            // 避免 forceDark 已经切了深色、这一层还是浅灰的那一帧硬闪。
-            Color(white: 0.13)
-                .opacity(player.isOpen ? 1 : 0)
-                .animation(.easeInOut(duration: 0.25), value: player.isOpen)
-                .allowsHitTesting(false)
 
             TabView(selection: $selection) {
                 TrainView()
@@ -72,15 +66,22 @@ struct RootTabView: View {
             // 页面延伸到状态栏 / 底部横条上的那部分（导航栏底、标签栏底）被切掉，
             // 露出的就是底下那层，于是上下各留一条边。
             // 现在只在播放页打开（卡片堆叠、需要圆角）时才裁，静止状态完全不裁。
-            .modifier(CardClip(active: player.isOpen, radius: 34 - 20 * player.pull))
+            .modifier(CardClip(active: player.isOpen, radius: 22 - 12 * player.pull))
             // 跟着下拉进度实时变化：拉得越多，下层越接近原始大小、越亮 —— 就是「渐渐回到上一级」
-            .scaleEffect(player.isOpen ? 0.94 + 0.06 * player.pull : 1, anchor: .center)
+            // 缩放幅度从 6% 收到 3%（0.97 + 0.03 * pull）：原来的 0.94 在拖到一半时
+            // 把整页压得太小，内容挤成一坨。现在只是「轻微退后一级」，文字不再明显变形。
+            .scaleEffect(player.isOpen ? 0.97 + 0.03 * player.pull : 1, anchor: .center)
             .overlay {
                 // 压暗遮罩抽成了独立小视图，见文件底部的 DimOverlay：
                 // pull 每帧都在变，遮罩只依赖 pull，没必要让根视图重新构造它。
                 DimOverlay()
             }
+            // 播放页盖在上面时，底下这层不接受点击：否则键盘弹着的时候，
+            // 下拉露出来的搜索框还能被戳到。用 allowsHitTesting + accessibilityHidden，
+            // 不额外加 .disabled —— .disabled 会把底下所有按钮画成灰态，
+            // 而下拉过程中这层是看得见的，按钮会一个个变灰（视觉副作用明显）。
             .allowsHitTesting(!player.isOpen)
+            .accessibilityHidden(player.isOpen)
             .animation(.spring(response: 0.46, dampingFraction: 0.90), value: player.isOpen)
 
             if player.isOpen {
@@ -110,8 +111,9 @@ struct RootTabView: View {
 // MARK: - 压暗遮罩
 //
 // 单独抽成一个只观察 player 的小视图：`pull` 是 @Published，拖动时每帧都在变，
-// 遮罩只跟 pull 有关（0.42 → 0），没必要每次都让根视图重新构造这一段。
-// 数值完全不改：0.42 * (1 - pull)。
+// 遮罩只跟 pull 有关（0.28 → 0），没必要每次都让根视图重新构造这一段。
+// 压暗峰值 4.9.6 由 0.42 收到 0.28：配合缩放从 6% 收到 3%，下拉时只是「略微退后」，
+// 不再像关灯一样整屏变黑。
 //
 // 注意它仍然挂在 TabView 的 `.overlay` 上；打开 / 关闭播放页时这层压暗的渐变
 // 用与外层同一条 spring（0.46 / 0.90），所以视觉和抽取之前完全一样。
@@ -120,7 +122,7 @@ private struct DimOverlay: View {
 
     var body: some View {
         Color.black
-            .opacity(player.isOpen ? 0.42 * (1 - Double(player.pull)) : 0)
+            .opacity(player.isOpen ? 0.28 * (1 - Double(player.pull)) : 0)
             // 和外层那圈完全同一条 spring（0.46 / 0.90），只是在这里再写一遍：
             // 这层现在是通过自己的订阅收到 isOpen 变化的，不保证一定落在
             // RootTabView 那圈 `.animation(…, value: player.isOpen)` 的事务里，

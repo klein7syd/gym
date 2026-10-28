@@ -98,6 +98,8 @@ struct MusicView: View {
             .safeAreaInset(edge: .bottom) {
                 if hub.current != nil, !player.isOpen {
                     MiniPlayerBar { player.open() }
+                        // 键盘弹起时不再把迷你播放条顶到键盘上方
+                        .ignoresSafeArea(.keyboard, edges: .bottom)
                 }
             }
             .navigationDestination(for: String.self) { key in
@@ -700,6 +702,8 @@ struct AlbumDetailView: View {
         .safeAreaInset(edge: .bottom) {
             if hub.current != nil, !player.isOpen {
                 MiniPlayerBar { player.open() }
+                    // 同上：专辑详情页的迷你播放条也不跟着键盘上移
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
             }
         }
     }
@@ -942,6 +946,14 @@ struct NowPlayingView: View {
         }
         .sheet(isPresented: $showTraining) {
             TrainingSheet()
+        }
+        // 播放页铺满整屏，键盘不该再把它顶起来（那会露出底下那一层）
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onAppear {
+            // 进来就把键盘收掉：否则会跟着播放页一起浮在下面，
+            // 下拉时底下的搜索框还会被它顶着、甚至能被点到
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                            to: nil, from: nil, for: nil)
         }
     }
 
@@ -1257,11 +1269,13 @@ struct NowPlayingView: View {
 
     // MARK: 底部训练状态（顶掉 Apple Music 的歌词 / 待播 / AirPlay）
 
+    // 两阶段：working（蓝，本组用时，只有「完成」）/ resting（绿，倒计时，只有「+30 / 跳过」）。
+    // 和训练页是同一个 RestTimer，状态天然同步。
+    // 高度没超固定预算：文字列约 70pt，按钮列现在最多两个（31×2 + 9 = 71pt），
+    // 原来的三个（31×3 + 18 = 111pt）才是最高的一档，所以 fixed = 462 不用动。
     private var trainingBar: some View {
         HStack(alignment: .center, spacing: 10) {
-            if rest.isRunning {
-                MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 62)
-            }
+            trainingRing
 
             Button {
                 showTraining = true
@@ -1270,7 +1284,7 @@ struct NowPlayingView: View {
                     HStack(spacing: 5) {
                         Image(systemName: "figure.strengthtraining.traditional")
                             .font(.system(size: 11, weight: .semibold))
-                        Text(store.current != nil ? "正在训练 · 第 \(setCount) 组" : "还没开始训练")
+                        Text(barCaption)
                             .font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundColor(.secondary)
@@ -1291,18 +1305,44 @@ struct NowPlayingView: View {
             .buttonStyle(.plain)
 
             VStack(spacing: 9) {
-                if rest.isRunning {
+                if rest.isResting {
+                    // 休息中：只有「+30」和「跳过」；「完成」不能出现（休息中不记组）
                     smallButton("+30") { rest.add(seconds: 30) }
+                    smallButton("跳过", tint: RestStyle.ring) { rest.skip() }
                 } else {
-                    smallButton("\(store.restSeconds)s") { rest.start(seconds: store.restSeconds) }
+                    // 训练中：只有「完成」；没有手动开始休息的按钮
+                    smallButton("完成", tint: WorkStyle.ring) { completeSet() }
                 }
-                smallButton("完成", tint: .accentColor) { completeSet() }
-                smallButton("跳过") { rest.skip() }
             }
         }
         .padding(.horizontal, 15)
         .padding(.vertical, 14)
         .glass(cornerRadius: 24)
+        .animation(.easeInOut(duration: 0.2), value: rest.isResting)
+    }
+
+    /// 圈：resting 绿倒计时 / working 蓝本组用时（每秒刷新，不另开 Timer）
+    @ViewBuilder
+    private var trainingRing: some View {
+        if rest.isResting {
+            MiniRestRing(progress: rest.progress, text: rest.remainingText,
+                         size: 62, color: RestStyle.ring)
+                .transition(.opacity)
+        } else {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                let elapsed = max(0, ctx.date.timeIntervalSince(rest.workStart))
+                MiniRestRing(progress: elapsed.truncatingRemainder(dividingBy: 60) / 60,
+                             text: clockText(elapsed),
+                             size: 62,
+                             color: WorkStyle.ring)
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private var barCaption: String {
+        guard store.current != nil else { return "还没开始训练" }
+        return rest.isResting ? "组间休息" : "第 \(setCount + 1) 组 · 训练中"
     }
 
     private func smallButton(_ title: String,
@@ -1327,14 +1367,17 @@ struct NowPlayingView: View {
         guard store.current != nil else {
             return "点这里记组、调重量，和训练页同步"
         }
-        if let s = store.currentExercise.sets.last {
-            return "上一组 \(fmtWeight(s.w)) kg × \(s.r) · 共 \(setCount) 组"
+        if rest.isResting {
+            return "结束后会自动提示 · 已完成 \(setCount) 组"
         }
-        return "这个动作还没记录，调好重量再点「完成」"
+        return "目标 \(fmtWeight(store.lastWeight)) kg × \(store.lastReps)"
     }
 
     private func completeSet() {
+        // 「完成」只在 working 阶段有效：休息中不能记组
+        guard !rest.isResting else { return }
         guard store.current != nil else {
+            // 还没开训练：直接打开训练面板，不在播放页里偷偷建 session
             showTraining = true
             return
         }
@@ -1342,6 +1385,12 @@ struct NowPlayingView: View {
         store.logSet(weight: store.lastWeight, reps: store.lastReps)
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         rest.start(seconds: store.restSeconds)
+    }
+
+    /// 秒数 → m:ss（本组用时）
+    private func clockText(_ t: TimeInterval) -> String {
+        let s = max(0, Int(t))
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     private func fmtWeight(_ w: Double) -> String {

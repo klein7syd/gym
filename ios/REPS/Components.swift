@@ -144,22 +144,26 @@ struct Sparkline: View {
 struct RestRing: View {
     let progress: Double
     let text: String
+    /// 环内第二行小字：休息时「休息中」，训练中「本组用时」
+    var caption: String = "休息中"
+    /// 进度弧颜色：训练中用 WorkStyle.ring（蓝），组间歇用 RestStyle.ring（绿）
+    var color: Color = RestStyle.ring
 
     var body: some View {
         ZStack {
             Circle()
                 .stroke(Color(UIColor.tertiarySystemFill), lineWidth: 12)
-            // 进度弧用组间歇绿（RestStyle.ring），和训练本身的蓝色强调色区分开
+            // 进度弧颜色由调用方按阶段决定：working 蓝 / resting 绿
             Circle()
                 .trim(from: 0, to: max(0.001, progress))
-                .stroke(RestStyle.ring, style: StrokeStyle(lineWidth: 12, lineCap: .round))
+                .stroke(color, style: StrokeStyle(lineWidth: 12, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(.linear(duration: 0.2), value: progress)
             VStack(spacing: 4) {
                 Text(text)
                     .font(.system(size: 44, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                Text("休息中")
+                Text(caption)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -174,15 +178,16 @@ struct MiniRestRing: View {
     let progress: Double
     let text: String
     var size: CGFloat = 48
+    /// 同上：working 蓝 / resting 绿
+    var color: Color = RestStyle.ring
 
     var body: some View {
         ZStack {
             Circle()
                 .stroke(Color(UIColor.tertiarySystemFill), lineWidth: size * 0.09)
-            // 同上：组间歇绿
             Circle()
                 .trim(from: 0, to: max(0.001, progress))
-                .stroke(RestStyle.ring, style: StrokeStyle(lineWidth: size * 0.09, lineCap: .round))
+                .stroke(color, style: StrokeStyle(lineWidth: size * 0.09, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(.linear(duration: 0.2), value: progress)
             Text(text)
