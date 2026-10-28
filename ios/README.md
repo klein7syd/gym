@@ -1,4 +1,4 @@
-# REPS iOS · 4.1.1
+# REPS iOS · 4.2.0
 
 纯 SwiftUI 原生 App（不是网页壳），源码在 `ios/REPS/`，由 GitHub Actions 在 macOS 上编译成未签名 IPA。
 
@@ -9,10 +9,10 @@
 **下载（免登录直链）**
 
 ```
-https://github.com/klein7syd/gym/releases/download/v4.1.1/REPS-4.1.1-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.2.0/REPS-4.2.0-unsigned.ipa
 ```
 
-Release 页：https://github.com/klein7syd/gym/releases/tag/v4.1.1
+Release 页：https://github.com/klein7syd/gym/releases/tag/v4.2.0
 
 **签名（Windows 上用 Sideloadly）**
 
@@ -46,7 +46,27 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.1.1
 
 资料库匹配是规范化的：`稻香 (Live)`、`稻香 - Remastered`、`Song feat. XX` 都能对上资料库里的 `稻香` / `Song`。
 
-### 2. 播放页按 Apple Music 重排
+### 2. 音乐页：Apple Music / 本地 两个界面
+
+顶部一个分段控件切换，两个来源彻底分开：
+
+| 界面 | 内容 |
+|---|---|
+| Apple Music | 搜索框查曲库、授权状态卡、当前曲目卡片、搜索空态提示 |
+| 本地 | 导入入口（整条按钮）、本地歌曲列表、沙盒存放说明 |
+
+搜索框跟着界面走：在本地页输入关键词就是过滤本地歌曲，不会去搜网络。
+
+### 3. 播放页照 Apple Music 版式重做
+
+- 顶部抓手 → 左收起 → 右更多
+- 封面占满宽度（最大 336），圆角 10，柔和投影
+- 歌名 22 粗体、艺人 18 灰色，**左对齐**贴封面左边（Apple Music 就是这个对齐）
+- 进度条 5pt 细条，下面左边「已播放」右边「-剩余」
+- 控制排：播放列表 / 上一首 / 播放（42pt 纯图标，无圆形底）/ 下一首 / 循环
+- 音量细条保留，拖动仍是真实系统音量
+- Apple Music 底部那排歌词 / 待播 / AirPlay 整排去掉，换成训练状态卡（动作、第几组、上一组重量×次数、休息环 +30/跳过）
+
 
 - **进度条 / 音量条都是自绘 4pt 细条**（`SlimBar`）：静态时只有一条线，按住拖动时 12pt 圆点把手才浮出来，点哪儿跳哪儿，命中区仍是 18pt 高。不再用系统 `Slider` 那个大白把手
 - **时间显示**：`已播放 / -剩余`，跟 Apple Music 一致
@@ -57,15 +77,15 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.1.1
 - **播放列表**：当前队列全量列出，点歌直接跳，当前项高亮
 - **底部训练状态**：当前动作、第几组、上一组「重量 × 次数」、休息倒计时环 + `+30` / `跳过`——数据源就是训练页那个 `RestTimer`，两边永远一致
 
-### 3. 视觉：全局去掉渐变
+### 4. 视觉：全局去掉渐变
 
 页面底色改成纯色 `systemGroupedBackground`（原来有三团蓝绿紫柔光）；玻璃卡片的填充和描边都改成单色；折线图区域填充改成 12% 半透明纯色；没有封面时的占位图也从渐变改成纯色。整页不再发灰发紫。
 
-### 4. 底部栏系统原生
+### 5. 底部栏系统原生
 
 `TabView` + `.tabItem`，底层就是 `UITabBar`。编译用 **iOS 26.5 SDK**，所以在手机上自动套用系统的液态玻璃外观，是系统画的，不是仿的。
 
-### 5. 身体数据可按日期补记
+### 6. 身体数据可按日期补记
 
 「我的」→「记录身体数据」：系统 `DatePicker` 选任意过去日期，填体重/体脂，保存即落点。最近 6 条可长按修改、设为曲线第 1 天、删除。
 
