@@ -293,7 +293,7 @@ struct MusicView: View {
     /// 专辑格子：封面 + 标题 + 艺人·年份（点进去是整张专辑）
     private func albumTile(_ a: AppleMusicService.Album) -> some View {
         NavigationLink(value: a.id) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 TrackArt(title: a.title, mediaID: a.sampleID, size: tileSide, corner: 6)
                     .shadow(color: .black.opacity(0.10), radius: 8, y: 4)
 
@@ -306,6 +306,7 @@ struct MusicView: View {
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+                    .padding(.top, 2)
             }
             .frame(width: tileSide, alignment: .leading)
             .contentShape(Rectangle())
@@ -323,7 +324,7 @@ struct MusicView: View {
                 TrackArt(title: m.title ?? "未知曲目",
                          mediaID: m.persistentID,
                          size: 50)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(m.title ?? "未知曲目")
                         .font(.system(size: 15, weight: playing ? .semibold : .regular))
                         .foregroundColor(playing ? .accentColor : .primary)
@@ -346,7 +347,7 @@ struct MusicView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 11)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -539,7 +540,7 @@ struct MusicView: View {
         } label: {
             HStack(spacing: 12) {
                 AlbumArt(title: track.title, size: 46)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(track.title)
                         .font(.system(size: 15, weight: playing ? .semibold : .regular))
                         .foregroundColor(playing ? .accentColor : .primary)
@@ -556,7 +557,7 @@ struct MusicView: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.vertical, 11)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -706,14 +707,15 @@ struct AlbumDetailView: View {
     // MARK: 头部
 
     private func header(_ a: AppleMusicService.Album) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
             TrackArt(title: a.title, mediaID: a.sampleID, size: coverSide, corner: 8)
                 .shadow(color: .black.opacity(0.16), radius: 18, y: 10)
 
-            VStack(spacing: 3) {
+            VStack(spacing: 6) {
                 // Apple Music 的顺序：大字是**专辑名**，小字才是「艺人 · 年份」
                 Text(a.title)
                     .font(.system(size: 21, weight: .bold))
+                    .lineSpacing(3)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
 
@@ -721,6 +723,7 @@ struct AlbumDetailView: View {
                         .filter { !$0.isEmpty }
                         .joined(separator: " · "))
                     .font(.system(size: 13))
+                    .lineSpacing(2)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
@@ -732,7 +735,7 @@ struct AlbumDetailView: View {
             .padding(.horizontal, 24)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 12)
+        .padding(.top, 16)
     }
 
     private func actions(_ a: AppleMusicService.Album) -> some View {
@@ -752,8 +755,8 @@ struct AlbumDetailView: View {
             .buttonStyle(GlassButtonStyle())
         }
         .padding(.horizontal, 20)
-        .padding(.top, 20)
-        .padding(.bottom, 14)
+        .padding(.top, 22)
+        .padding(.bottom, 18)
     }
 
     // MARK: 曲目
@@ -767,7 +770,7 @@ struct AlbumDetailView: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
         .glass()
         .padding(.horizontal, 20)
     }
@@ -790,6 +793,7 @@ struct AlbumDetailView: View {
 
                 Text(m.title ?? "未知曲目")
                     .font(.system(size: 15, weight: playing ? .semibold : .regular))
+                    .lineSpacing(3)
                     .foregroundColor(playing ? .accentColor : .primary)
                     .lineLimit(2)
 
@@ -808,7 +812,8 @@ struct AlbumDetailView: View {
             }
             .padding(.leading, 12)
             .padding(.trailing, 14)
-            .padding(.vertical, 9)
+            .padding(.vertical, 13)
+            .frame(minHeight: 52)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -854,6 +859,8 @@ struct NowPlayingView: View {
     @ObservedObject var player = PlayerPresenter.shared
 
     @State private var dragOffset: CGFloat = 0
+    /// 这一轮下拉有没有已经通知过「开始关闭」（只在第一次 onChanged 里发一次）
+    @State private var dismissing = false
     @State private var showQueue = false
     @State private var showTraining = false
     /// 拖动进度条时的临时秒数（nil = 没在拖，跟随播放器）
@@ -866,7 +873,15 @@ struct NowPlayingView: View {
         GeometryReader { geo in
             let safe = SafeArea.insets
             // 除封面以外的固定高度（抓手 + 头部 + 标题 + 进度 + 控制 + 音量 + 训练卡）
-            let fixed: CGFloat = 448
+            //
+            // 4.9.2 由 448 加到 462，构成：标题区两行间距 +3（2→5）、
+            // 训练卡文字间距 +4（4→6，两处间隙各 +2）、训练卡上下内边距 +4（12→14）、
+            // 右侧三个小按钮间距 +2（8→9）、再留 1pt 余量。
+            // 小屏预算（side = min(宽×0.82, 高 - 上下安全区 - 462, 340)）：
+            //   iPhone SE3 375×667（安全区 20/0）→ 185pt，未触及 130 下限；
+            //   iPhone 13 mini 375×812（50/34）→ 266pt；iPhone 16（59/34）→ 297pt。
+            // 也就是说小屏上封面会变小一点，但不会被挤出屏幕（Spacer 还能再压）。
+            let fixed: CGFloat = 462
             // 铺满整屏之后高度富余，封面按屏宽 82% 走，上限 340
             let side = max(130, min(geo.size.width * 0.82,
                                     geo.size.height - safe.top - safe.bottom - fixed,
@@ -1042,8 +1057,16 @@ struct NowPlayingView: View {
                 dragOffset = h
                 // 0…1：拉到 260pt 就算到底，下层同步动
                 player.pull = min(1, h / 260)
+                // 刚拖起来（位移还只有 8pt 左右、底下几乎没露出）就把窗口切回浅色。
+                // 这一步不能等到松手：拖到一半时底下那整页已经露出来了，
+                // 那时再从深变浅，就是肉眼看到的「下拉闪一下」。
+                if h > 0 && !dismissing {
+                    dismissing = true
+                    player.beginDismiss()
+                }
             }
             .onEnded { v in
+                dismissing = false
                 let far = v.translation.height > 110 || v.predictedEndTranslation.height > 260
                 if far {
                     player.close()
@@ -1052,6 +1075,8 @@ struct NowPlayingView: View {
                         dragOffset = 0
                         player.pull = 0
                     }
+                    // 弹回原位后再把窗口切回深色（0.36s 后，弹回动画 0.34s）
+                    player.cancelDismiss()
                 }
             }
     }
@@ -1071,15 +1096,17 @@ struct NowPlayingView: View {
     // MARK: 歌名 / 艺人
 
     private func titleBlock(pad: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 5) {
             Text(hub.current?.title ?? "没有正在播放的音乐")
                 .font(.system(size: 24, weight: .semibold))
+                .lineSpacing(2)
                 .foregroundColor(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
 
             Text(subtitleText)
                 .font(.system(size: 18, weight: .regular))
+                .lineSpacing(2)
                 .foregroundColor(.secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
@@ -1224,7 +1251,7 @@ struct NowPlayingView: View {
             Button {
                 showTraining = true
             } label: {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 5) {
                         Image(systemName: "figure.strengthtraining.traditional")
                             .font(.system(size: 11, weight: .semibold))
@@ -1248,7 +1275,7 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
 
-            VStack(spacing: 8) {
+            VStack(spacing: 9) {
                 if rest.isRunning {
                     smallButton("+30") { rest.add(seconds: 30) }
                 } else {
@@ -1259,7 +1286,7 @@ struct NowPlayingView: View {
             }
         }
         .padding(.horizontal, 15)
-        .padding(.vertical, 12)
+        .padding(.vertical, 14)
         .glass(cornerRadius: 24)
     }
 

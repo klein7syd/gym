@@ -51,14 +51,55 @@ final class PlayerPresenter: ObservableObject {
             isOpen = true
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.52) { [weak self] in
-            self?.forceDark = true
+            // 0.52s 内用户已经把它关掉了：不要再把窗口切成深色，
+            // 否则下一次打开会在「已经盖满」之前就变成深色，露出来那一下就是闪。
+            guard let self = self, self.isOpen else { return }
+            self.forceDark = true
+        }
+    }
+
+    /// 往下拖的**第一帧**：这时位移只有 8pt 左右，底下几乎还没露出来，
+    /// 在这里把窗口切回浅色谁也看不见；再晚一点（比如松手时才切），
+    /// 底下已经露出的那整页会当场由深变浅 —— 那就是「下拉时闪一下」的来源。
+    /// 用关掉动画的 Transaction：preferredColorScheme 的变化一旦被动画带，
+    /// 会变成一段 0.4s 的渐变，和手势叠在一起看更花。
+    func beginDismiss() {
+        guard forceDark else { return }
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { forceDark = false }
+    }
+
+    /// 没拖够、弹回原位：等弹回动画（response 0.34）走完再把窗口切回深色。
+    /// 回调里必须复查状态 —— 这 0.36s 内用户可能又把它关掉了，或者又开始拖了。
+    func cancelDismiss() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) { [weak self] in
+            guard let self = self, self.isOpen, self.pull == 0 else { return }
+            self.forceDark = true
         }
     }
 
     func close() {
+        guard isOpen else { return }
         pull = 0
-        // 播放页此刻还铺满全屏，切换不可见
-        forceDark = false
+        // 先把窗口切回浅色。此刻播放页还盖满全屏，切了看不见；
+        // 用 disablesAnimations 的 Transaction，理由同 beginDismiss。
+        let needFlip = forceDark
+        if needFlip {
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { forceDark = false }
+            // 让配色切换先单独渲染一帧（这一帧播放页仍盖满屏），0.05s 后再下滑
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.startDismissAnimation()
+            }
+        } else {
+            // 拖动开始时已经切过浅色了，不用再等
+            startDismissAnimation()
+        }
+    }
+
+    private func startDismissAnimation() {
         withAnimation(.spring(response: 0.40, dampingFraction: 0.92)) {
             isOpen = false
         }
@@ -79,7 +120,7 @@ struct TrainingSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 14) {
+                VStack(spacing: 16) {
                     exerciseCard
 
                     if rest.isRunning { restCard }
@@ -143,26 +184,29 @@ struct TrainingSheet: View {
 
     private var exerciseCard: some View {
         let ex = store.currentExercise
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 8) {
             Text("当前动作")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
             Text(ex.name)
                 .font(.system(size: 20, weight: .bold))
+                .lineSpacing(2)
                 .lineLimit(1)
             HStack(spacing: 6) {
                 Text("已做 \(ex.sets.count) 组")
                     .font(.system(size: 12))
+                    .lineSpacing(2)
                     .foregroundColor(.secondary)
                 if let s = ex.sets.last {
                     Text("· 上一组 \(formatWeight(s.w)) kg × \(s.r)")
                         .font(.system(size: 12))
+                        .lineSpacing(2)
                         .foregroundColor(.secondary)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
+        .padding(18)
         .glass(cornerRadius: 20, shadow: false)
     }
 
@@ -171,7 +215,7 @@ struct TrainingSheet: View {
     private var restCard: some View {
         HStack(spacing: 14) {
             MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 58)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text("组间休息")
                     .font(.system(size: 13, weight: .semibold))
                 Text("结束后会自动提示")
@@ -198,14 +242,14 @@ struct TrainingSheet: View {
             }
             .buttonStyle(ScaleButtonStyle())
         }
-        .padding(14)
+        .padding(16)
         .glass(cornerRadius: 20, shadow: false)
     }
 
     // MARK: 组列表
 
     private var setListCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("本次记录")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.secondary)
@@ -214,6 +258,7 @@ struct TrainingSheet: View {
             if sets.isEmpty {
                 Text("还没有记录，调好重量和次数点「完成一组」")
                     .font(.system(size: 12))
+                    .lineSpacing(3)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 6)
@@ -239,12 +284,12 @@ struct TrainingSheet: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 6)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
+        .padding(18)
         .glass(cornerRadius: 20, shadow: false)
     }
 

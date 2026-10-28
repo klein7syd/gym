@@ -87,9 +87,11 @@ struct RootTabView: View {
             if player.isOpen {
                 NowPlayingView()
                     .zIndex(10)
+                    // 移出时只位移、不淡出：淡出会让播放页在半透明的那几帧里
+                    // 透出底下那层（深浅色交接处就会闪一下）。滑出时点一下就能盖住。
                     .transition(.asymmetric(
                         insertion: .move(edge: .bottom).combined(with: .opacity),
-                        removal: .move(edge: .bottom).combined(with: .opacity)
+                        removal: .move(edge: .bottom)
                     ))
             }
         }

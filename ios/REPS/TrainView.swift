@@ -73,22 +73,25 @@ struct TrainView: View {
                 showPicker = true
             } label: {
                 HStack {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 9) {
                         Text("当前动作")
                             .font(.caption)
                             .foregroundColor(.secondary)
                         Text(ex.name)
                             .font(.title2)
                             .fontWeight(.bold)
+                            .lineSpacing(2)
                             .foregroundColor(.primary)
                         if let last = last {
                             Text("上次 \(last.sets.count) 组 · 最重 \(formatWeight(last.maxWeight)) kg · 1RM \(String(format: "%.1f", last.bestE1RM)) kg")
                                 .font(.caption)
+                                .lineSpacing(2)
                                 .foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         } else {
                             Text("还没记录过，先找能标准做 8-12 次的重量")
                                 .font(.caption)
+                                .lineSpacing(2)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -133,7 +136,7 @@ struct TrainView: View {
                     .scaleEffect(0.62)
                     .frame(width: 118, height: 118)
 
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 6) {
                         ForEach(restOptions, id: \.self) { s in
                             Button {
@@ -181,6 +184,7 @@ struct TrainView: View {
 
                     Text("锁屏后到点由系统通知提醒")
                         .font(.system(size: 10))
+                        .lineSpacing(2)
                         .foregroundColor(.secondary)
                 }
             }
@@ -195,6 +199,7 @@ struct TrainView: View {
             if ex.sets.isEmpty {
                 Text("还没有记录。调好重量和次数，做完一组点上面的按钮。")
                     .font(.subheadline)
+                    .lineSpacing(3)
                     .foregroundColor(.secondary)
             } else {
                 VStack(spacing: 0) {
@@ -215,7 +220,7 @@ struct TrainView: View {
                                 .font(.caption)
                                 .foregroundColor(.accentColor)
                         }
-                        .padding(.vertical, 9)
+                        .padding(.vertical, 13)
                         if i < ex.sets.count - 1 { Divider() }
                     }
                 }
