@@ -84,28 +84,40 @@ struct AppBackground: View {
 
 // MARK: - 卡片圆角裁剪（只在需要时才裁）
 
-/// 圆角裁剪必须「按需」：不裁的时候绝不能被裁。
+/// 圆角裁剪：**结构恒定，只有数值在变**。
 ///
-/// 踩过的坑（4.6 → 4.8 一直存在的「上下大黑边」）：
+/// 为什么不能直接用 `.clipShape`：
 /// SwiftUI 里凡是不 ignore 安全区的容器（TabView、NavigationStack 底下的页面、
-/// GeometryReader 也是这样）都是**按安全区布局**的。里面再放一个 `.ignoresSafeArea()`
-/// 的背景，背景是能画到状态栏和底部横条上的；可一旦在这条链路上套
+/// GeometryReader 也是这样）都是**按安全区布局**的。里面再放一个 `.ignoresSafeArea()` 的背景，
+/// 背景是能画到状态栏和底部横条上的；可一旦在这条链路上套
 /// `.clipShape(RoundedRectangle(cornerRadius: 0))`，裁剪边就是**安全区矩形**，
-/// 连圆角为 0 都会硬切一刀，把铺出去的那部分削平 —— 露出来就是底下那层黑，
-/// 表现为「一进 App 上下两条大黑边」「播放页上下两条大黑边」。
+/// 连圆角为 0 都会硬切一刀，把铺出去的那部分削平 —— 露出来就是底下那层，
+/// 表现为「一进 App 上下两条大黑边」「播放页上下两条大黑边」（4.6 → 4.8 的老 Bug）。
 ///
-/// 所以：圆角为 0（也就是不需要圆角）的时候，这个修饰符什么都不做。
+/// 为什么用 `mask` 而不是 `clipShape`：
+/// mask 里的形状带了 `.ignoresSafeArea()`，圆角为 0 时它就是一块**覆盖整屏（含状态栏与
+/// 底部横条）的矩形**，不沿安全区矩形切边，所以静止状态不可能切出黑边；
+/// 需要圆角时把半径变大，遮罩自己变成圆角矩形，一切都还在整屏范围内。
+///
+/// 为什么不能写成 `if active { … } else { … }`：
+/// 那是 `_ConditionalContent`，两个分支是不同的结构身份。`active` 一翻转，
+/// SwiftUI 会把 `content` 整个销毁重建 —— 对根 TabView 来说就是：选中的 tab 回到第一页、
+/// 各页 ScrollView 位置归零、NavigationStack 路径清空，而且过渡退化成淡入淡出而不是连续插值。
+/// 现在 `body` 永远返回同一种结构（mask 一层），`active` 只影响 `effectiveRadius` 的数值，
+/// 结构身份不变，状态不丢，圆角也能被外层 `.animation(…, value: player.isOpen)` 连续驱动。
 struct CardClip: ViewModifier {
-    /// false 时完全不裁；true 时按 `radius` 裁圆角
+    /// false 时圆角按 0 处理（遮罩=整屏矩形，等于不裁）；true 时按 `radius` 裁圆角
     var active: Bool
     var radius: CGFloat
 
-    @ViewBuilder
+    private var effectiveRadius: CGFloat {
+        (active && radius > 0.01) ? radius : 0
+    }
+
     func body(content: Content) -> some View {
-        if active && radius > 0.01 {
-            content.clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        } else {
-            content
+        content.mask {
+            RoundedRectangle(cornerRadius: effectiveRadius, style: .continuous)
+                .ignoresSafeArea()
         }
     }
 }

@@ -530,7 +530,9 @@ struct MusicView: View {
     }
 
     private func localRow(index: Int, track: Track) -> some View {
-        let playing = hub.current?.source == .local && hub.current?.title == track.title
+        // 按 id 比较：本地曲目进队列时 PlayItem.id = Track.id.uuidString（MusicHub.localItems），
+        // 所以能精确对上；以前按歌名比，同名歌会一起高亮。
+        let playing = hub.current?.source == .local && hub.current?.id == track.id.uuidString
         return Button {
             hub.playLocal(at: index)
             player.open()
@@ -914,11 +916,11 @@ struct NowPlayingView: View {
         }
         .ignoresSafeArea()
         .background { playerBackground }
-        .offset(y: max(0, dragOffset))
-        // 拖动时圆角随之长大，和底下的卡片形成层次。
-        // 静止状态（圆角 0）一定不能裁 —— 裁剪边是安全区矩形，会把铺到状态栏 / 底部横条上的
-        // 液态玻璃背景切掉，上下各留一条纯黑，就是「一进播放页上下大黑边」。详见 Theme.swift。
+        // 顺序必须是「背景 → CardClip → offset」：
+        // 遮罩要盖在卡片本身上，再让整张卡片往下位移，圆角才会跟着走；
+        // 反过来（先 offset 再 mask）遮罩会留在原地，拖动时圆角跑到屏幕角落去。
         .modifier(CardClip(active: dragOffset > 0.5, radius: min(34, dragOffset / 5)))
+        .offset(y: max(0, dragOffset))
         .environment(\.colorScheme, .dark)
         .sheet(isPresented: $showQueue) {
             QueueSheet()

@@ -33,8 +33,11 @@ struct RootTabView: View {
 
             // 播放页打开时这一层换成播放页自己的底色（深灰 #212121），当卡片堆叠的底。
             // 用播放页同色而不是纯黑：万一播放页边缘有一点没铺到，露出来的也是同一个颜色。
+            // 淡入用 0.25s easeInOut：和 TabView 那 0.46s 的 spring 大致同步，
+            // 避免 forceDark 已经切了深色、这一层还是浅灰的那一帧硬闪。
             Color(white: 0.13)
                 .opacity(player.isOpen ? 1 : 0)
+                .animation(.easeInOut(duration: 0.25), value: player.isOpen)
                 .allowsHitTesting(false)
 
             TabView(selection: $selection) {

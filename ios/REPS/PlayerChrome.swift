@@ -8,12 +8,18 @@ import UIKit
 // 上下各留一条黑边（4.7 的「重大 Bug」就是这么来的）。
 
 enum SafeArea {
+    /// 取不到窗口时的回退值：按灵动岛机型（top 59 / bottom 34）。
+    /// 绝不能用 0 —— 0 会让播放页内容顶到状态栏和底部横条下面。
+    private static let fallback = UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0)
+
     static var insets: UIEdgeInsets {
-        let scene = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        // 优先前台活跃的场景，没有再退回任意一个
+        let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
         let win = scene?.windows.first(where: { $0.isKeyWindow }) ?? scene?.windows.first
-        return win?.safeAreaInsets ?? UIEdgeInsets(top: 47, left: 0, bottom: 34, right: 0)
+        // 首帧可能还没布局：top == 0 视为「拿不到」，回退到灵动岛基准值
+        guard let insets = win?.safeAreaInsets, insets.top > 0 else { return fallback }
+        return insets
     }
 }
 
