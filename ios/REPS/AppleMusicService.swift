@@ -298,7 +298,8 @@ final class AppleMusicService: ObservableObject {
     //      艺人 62 起、专辑 30 起（专辑最容易出噪音，权重压到最低）
     //   ③ 有强命中时设一个相关性下限，把纯靠专辑名擦边命中的结果直接丢掉
     //   ④ 支持拼音：`qt` / `qingtian` 都能搜到「晴天」
-    func search(_ raw: String, limit: Int = 60) -> [MPMediaItem] {
+    // limit <= 0 表示不截断：资料库里匹配多少就给多少（外面是 LazyVStack，不卡）。
+    func search(_ raw: String, limit: Int = 0) -> [MPMediaItem] {
         guard access == .granted, indexBuilt else { return [] }
 
         let tokens = Self.tokens(raw)
@@ -336,7 +337,8 @@ final class AppleMusicService: ObservableObject {
             if $0.len != $1.len { return $0.len < $1.len }
             return $0.order < $1.order
         }
-        return out.prefix(limit).map { $0.item }
+        let mapped = out.map { $0.item }
+        return limit > 0 ? Array(mapped.prefix(limit)) : mapped
     }
 
     private static func score(token: String, entry: Entry, latin: Bool) -> Int {

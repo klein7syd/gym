@@ -10,17 +10,22 @@ import SwiftUI
 final class PlayerPresenter: ObservableObject {
     static let shared = PlayerPresenter()
     @Published var isOpen = false
+    /// 下拉进度：0 = 完全打开，1 = 已经拉到底（松手就关）。
+    /// 下层菜单靠它跟着渐进放大 / 变亮 / 变圆角，而不是等关闭动画才动一下。
+    @Published var pull: CGFloat = 0
 
     private init() {}
 
     func open() {
         guard !isOpen else { return }
+        pull = 0
         withAnimation(.spring(response: 0.46, dampingFraction: 0.90)) {
             isOpen = true
         }
     }
 
     func close() {
+        pull = 0
         withAnimation(.spring(response: 0.40, dampingFraction: 0.92)) {
             isOpen = false
         }
@@ -36,6 +41,7 @@ struct TrainingSheet: View {
     @ObservedObject var store = Store.shared
     @ObservedObject var rest = RestTimer.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var detent: PresentationDetent = .large
 
     var body: some View {
         NavigationStack {
@@ -96,7 +102,7 @@ struct TrainingSheet: View {
             }
             .onAppear { store.ensureSession() }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.medium, .large], selection: $detent)
         .presentationDragIndicator(.visible)
     }
 

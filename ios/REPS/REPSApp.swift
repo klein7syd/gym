@@ -25,7 +25,7 @@ struct RootTabView: View {
 
     var body: some View {
         ZStack {
-            // 播放页推上来时，底下的菜单缩小、压暗，露出这层黑底（iOS 卡片堆叠的观感）
+            // 播放页推上来时，底下的菜单缩小、压暗，露出这层底（iOS 卡片堆叠的观感）
             Color.black.ignoresSafeArea()
 
             TabView(selection: $selection) {
@@ -54,10 +54,13 @@ struct RootTabView: View {
                     .tag(3)
             }
             .tint(.accentColor)
-            .scaleEffect(player.isOpen ? 0.93 : 1, anchor: .center)
+            // 跟着下拉进度实时变化：拉得越多，下层越接近原始大小、越亮 —— 就是「渐渐回到上一级」
+            .scaleEffect(player.isOpen ? 0.94 + 0.06 * player.pull : 1, anchor: .center)
+            .clipShape(RoundedRectangle(cornerRadius: player.isOpen ? 34 - 20 * player.pull : 0,
+                                        style: .continuous))
             .overlay {
                 Color.black
-                    .opacity(player.isOpen ? 0.35 : 0)
+                    .opacity(player.isOpen ? 0.42 * (1 - Double(player.pull)) : 0)
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
             }

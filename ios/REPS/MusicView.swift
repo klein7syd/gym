@@ -149,7 +149,7 @@ struct MusicView: View {
                 .foregroundColor(.secondary)
             Text("搜我的资料库")
                 .font(.system(size: 15, weight: .semibold))
-            Text("只搜你 Apple Music 资料库里的歌，搜到的都能整首完整播放。想加歌就去 Apple Music 里点「+」。")
+            Text("搜歌名、艺人、专辑，也可以打拼音首字母。想加歌就去 Apple Music 里点「+」。")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -860,8 +860,10 @@ struct NowPlayingView: View {
     var body: some View {
         GeometryReader { geo in
             // 除封面以外的固定高度（抓手 + 头部 + 标题 + 进度 + 控制 + 音量 + 训练卡）
-            let fixed: CGFloat = 396
+            let fixed: CGFloat = 412
             let side = max(120, min(geo.size.width * 0.76, geo.size.height - fixed, 322))
+            // 标题 / 进度 / 控制 / 音量都对齐到封面的左右边线（Apple Music 就是这个对齐）
+            let pad = max(inset, (geo.size.width - side) / 2)
 
             VStack(spacing: 0) {
                 grabber
@@ -875,22 +877,22 @@ struct NowPlayingView: View {
                 Spacer(minLength: 26)
                     .frame(height: 30)
 
-                titleBlock
+                titleBlock(pad: pad)
 
                 Spacer(minLength: 22)
                     .frame(height: 26)
 
-                progress
+                progressRow(pad: pad)
 
                 Spacer(minLength: 14)
                     .frame(height: 20)
 
-                controls
+                controls(pad: pad)
 
                 Spacer(minLength: 16)
                     .frame(height: 22)
 
-                volume
+                volume(pad: pad)
 
                 Spacer(minLength: 12)
 
@@ -902,7 +904,8 @@ struct NowPlayingView: View {
         }
         .background { playerBackground }
         .offset(y: max(0, dragOffset))
-        .clipShape(RoundedRectangle(cornerRadius: dragOffset > 4 ? 24 : 0, style: .continuous))
+        // 拉动时圆角随之长大，和底下的卡片形成层次
+        .clipShape(RoundedRectangle(cornerRadius: min(34, dragOffset / 5), style: .continuous))
         .environment(\.colorScheme, .dark)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showQueue) {
@@ -1016,12 +1019,15 @@ struct NowPlayingView: View {
         .gesture(dismissDrag)
     }
 
-    /// 往下拖收回：底下的菜单一直可见，所以不会出现黑边；
+    /// 往下拖收回：底下的菜单一直可见（并被一起带着放大 / 变亮），所以不会出现黑边；
     /// 拖过阈值就关，没拖够就弹回原位。
     private var dismissDrag: some Gesture {
         DragGesture(minimumDistance: 8)
             .onChanged { v in
-                if v.translation.height > 0 { dragOffset = v.translation.height }
+                let h = max(0, v.translation.height)
+                dragOffset = h
+                // 0…1：拉到 260pt 就算到底，下层同步动
+                player.pull = min(1, h / 260)
             }
             .onEnded { v in
                 let far = v.translation.height > 110 || v.predictedEndTranslation.height > 260
@@ -1030,6 +1036,7 @@ struct NowPlayingView: View {
                 } else {
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
                         dragOffset = 0
+                        player.pull = 0
                     }
                 }
             }
@@ -1048,7 +1055,7 @@ struct NowPlayingView: View {
 
     // MARK: 歌名 / 艺人
 
-    private var titleBlock: some View {
+    private func titleBlock(pad: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(hub.current?.title ?? "没有正在播放的音乐")
                 .font(.system(size: 22, weight: .semibold))
@@ -1063,7 +1070,7 @@ struct NowPlayingView: View {
                 .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, inset)
+        .padding(.horizontal, pad)
     }
 
     private var subtitleText: String {
@@ -1073,7 +1080,7 @@ struct NowPlayingView: View {
 
     // MARK: 进度
 
-    private var progress: some View {
+    private func progressRow(pad: CGFloat) -> some View {
         VStack(spacing: 6) {
             GlassBar(progress: progressRatio,
                      onScrub: { v in scrub = v * max(1, hub.duration) },
@@ -1092,7 +1099,7 @@ struct NowPlayingView: View {
             .monospacedDigit()
             .foregroundColor(.secondary)
         }
-        .padding(.horizontal, inset)
+        .padding(.horizontal, pad)
     }
 
     private var progressRatio: Double {
@@ -1109,7 +1116,7 @@ struct NowPlayingView: View {
     //
     // Apple Music 是「随机 / 上一首 / 播放 / 下一首 / 循环」，第一个位置这里换成播放列表。
 
-    private var controls: some View {
+    private func controls(pad: CGFloat) -> some View {
         HStack(spacing: 0) {
             Button {
                 showQueue = true
@@ -1170,12 +1177,13 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, inset - 4)
+        // 图标本身有 46pt 命中框，往里收一点，视觉上才和封面边线齐
+        .padding(.horizontal, max(0, pad - 8))
     }
 
     // MARK: 系统音量
 
-    private var volume: some View {
+    private func volume(pad: CGFloat) -> some View {
         HStack(spacing: 9) {
             Image(systemName: "speaker.fill")
                 .font(.system(size: 10))
@@ -1185,7 +1193,7 @@ struct NowPlayingView: View {
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
         }
-        .padding(.horizontal, inset)
+        .padding(.horizontal, pad)
     }
 
     // MARK: 底部训练状态（顶掉 Apple Music 的歌词 / 待播 / AirPlay）
@@ -1193,23 +1201,23 @@ struct NowPlayingView: View {
     private var trainingBar: some View {
         HStack(alignment: .center, spacing: 10) {
             if rest.isRunning {
-                MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 50)
+                MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 56)
             }
 
             Button {
                 showTraining = true
             } label: {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 5) {
                         Image(systemName: "figure.strengthtraining.traditional")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text(store.current != nil ? "正在训练 · 第 \(setCount) 组" : "还没开始训练")
                             .font(.system(size: 10, weight: .semibold))
+                        Text(store.current != nil ? "正在训练 · 第 \(setCount) 组" : "还没开始训练")
+                            .font(.system(size: 11, weight: .semibold))
                     }
                     .foregroundColor(.secondary)
 
                     Text(store.current != nil ? store.currentExercise.name : "打开训练面板")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
 
@@ -1223,7 +1231,7 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
 
-            VStack(spacing: 6) {
+            VStack(spacing: 7) {
                 if rest.isRunning {
                     smallButton("+30") { rest.add(seconds: 30) }
                 } else {
@@ -1234,7 +1242,7 @@ struct NowPlayingView: View {
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.vertical, 15)
         .glass(cornerRadius: 22)
     }
 
@@ -1245,7 +1253,7 @@ struct NowPlayingView: View {
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundColor(tint)
-                .frame(width: 52, height: 26)
+                .frame(width: 54, height: 29)
                 .background(Capsule().fill(tint.opacity(0.14)))
                 .contentShape(Capsule())
         }
@@ -1289,7 +1297,6 @@ struct NowPlayingView: View {
 struct QueueSheet: View {
     @ObservedObject var hub = MusicHub.shared
     @Environment(\.dismiss) private var dismiss
-    @State private var editMode: EditMode = .inactive
 
     var body: some View {
         NavigationStack {
@@ -1298,30 +1305,21 @@ struct QueueSheet: View {
                     ForEach(Array(hub.queue.enumerated()), id: \.element.id) { i, item in
                         row(index: i, item: item)
                     }
-                    // 拖动右边把手改顺序（进编辑模式后把手才出来）
+                    // 任何一行都能直接拖：不用先点「排序」
                     .onMove { source, dest in
                         hub.reorder(from: source, to: dest)
                     }
                 } header: {
                     Text("\(hub.queue.count) 首 · \(hub.repeatMode.label)")
                 } footer: {
-                    Text(editMode.isEditing
-                         ? "按住右侧把手拖动，松手即生效。"
-                         : "点右上「排序」可以拖动调整播放顺序。")
+                    Text("按住任意一行上下拖动即可调整顺序，松手即时生效；点一下就是跳到那首。")
                 }
             }
-            .environment(\.editMode, $editMode)
+            // 常驻排序状态：右侧把手一直在，滑动就能改顺序
+            .environment(\.editMode, .constant(.active))
             .navigationTitle("播放列表")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(editMode.isEditing ? "完成排序" : "排序") {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            editMode = editMode.isEditing ? .inactive : .active
-                        }
-                    }
-                    .disabled(hub.queue.count < 2)
-                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("关闭") { dismiss() }
                         .fontWeight(.semibold)
@@ -1330,7 +1328,6 @@ struct QueueSheet: View {
         }
     }
 
-    @ViewBuilder
     private func row(index i: Int, item: PlayItem) -> some View {
         let content = HStack(spacing: 10) {
             TrackArt(title: item.title,
@@ -1354,19 +1351,10 @@ struct QueueSheet: View {
                     .foregroundColor(.accentColor)
             }
         }
-        .contentShape(Rectangle())
-
-        if editMode.isEditing {
-            // 编辑模式下不做 Button，否则点行会去跳播而不是拖动
-            content
-        } else {
-            Button {
-                hub.jump(to: i)
-            } label: {
-                content
-            }
-            .buttonStyle(.plain)
-        }
+        // 排序状态常开，用 tap 手势而不是 Button —— Button 在编辑态的行里容易被行本身吃掉
+        return content
+            .contentShape(Rectangle())
+            .onTapGesture { hub.jump(to: i) }
     }
 }
 
