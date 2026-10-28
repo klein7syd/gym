@@ -398,15 +398,17 @@ final class Store: ObservableObject {
 
     var bodyLog: [BodyLogEntry] { state.bodyLog.sorted { $0.date < $1.date } }
 
-    /// 记录一次体重 / 体脂。同一天只保留最新一条，避免反复修改把曲线撑爆。
-    func logBody(weight: Double?, bodyFat: Double?) {
-        var rec = BodyLogEntry(date: Date(), weight: weight, bodyFat: bodyFat)
+    /// 记录一次体重 / 体脂。可以指定日期，方便补记前几天漏掉的数据。
+    /// 同一天只保留一条，避免反复修改把曲线撑爆。
+    func logBody(weight: Double?, bodyFat: Double?, date: Date = Date()) {
+        let cal = Calendar.current
+        let day = cal.startOfDay(for: date)
+        var rec = BodyLogEntry(date: day, weight: weight, bodyFat: bodyFat)
         if let w = weight, let bf = bodyFat, w > 0, bf > 0 {
             rec.leanMass = (w * (1 - bf / 100) * 10).rounded() / 10
         } else if let w = weight, let bf = state.profile.bodyFat, w > 0, bf > 0 {
             rec.leanMass = (w * (1 - bf / 100) * 10).rounded() / 10
         }
-        let cal = Calendar.current
         if let i = state.bodyLog.firstIndex(where: { cal.isDate($0.date, inSameDayAs: rec.date) }) {
             // 合并：本次没填的项沿用当天已有的值
             if rec.weight == nil { rec.weight = state.bodyLog[i].weight }
@@ -418,6 +420,19 @@ final class Store: ObservableObject {
             state.bodyLog.append(rec)
         }
         state.bodyLog.sort { $0.date < $1.date }
+        save()
+    }
+
+    func deleteBodyLog(id: UUID) {
+        state.bodyLog.removeAll { $0.id == id }
+        save()
+    }
+
+    /// 曲线横轴的起点（健身第 1 天），可以手动改。
+    var programStart: Date { startDate }
+
+    func setProgramStart(_ date: Date) {
+        state.startDate = Calendar.current.startOfDay(for: date)
         save()
     }
 

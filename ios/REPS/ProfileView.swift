@@ -7,6 +7,7 @@ struct ProfileView: View {
 
     private enum Field: Hashable {
         case height, weight, age, neck, waist, hip, bodyFat, bench, squat, dead
+        case logWeight, logBodyFat
     }
 
     @FocusState private var focused: Field?
@@ -16,11 +17,17 @@ struct ProfileView: View {
     @State private var showEraseAlert = false
     @State private var toast: String?
 
+    // 补记身体数据
+    @State private var logDate = Date()
+    @State private var logWeight = ""
+    @State private var logBodyFat = ""
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
                     basicCard
+                    bodyLogCard
                     if let m = store.bodyMetrics {
                         metricsCard(m)
                     }
@@ -31,7 +38,7 @@ struct ProfileView: View {
                     aboutCard
                 }
                 .padding(.horizontal, 20)
-                .padding(.bottom, 118)
+                .padding(.bottom, 28)
             }
             .scrollDismissesKeyboard(.interactively)
             .background(
@@ -84,7 +91,7 @@ struct ProfileView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
                         .glassInner(cornerRadius: 18)
-                        .padding(.bottom, 118)
+                        .padding(.bottom, 28)
                         .transition(.opacity)
                 }
             }
@@ -167,6 +174,185 @@ struct ProfileView: View {
         }
         .padding(16)
         .glass()
+    }
+
+    // MARK: - 记录身体数据（可选日期）
+
+    private var bodyLogCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("记录身体数据")
+                    .font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Text("日期可选 · 能补记以前")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                Text("日期")
+                    .font(.system(size: 15))
+                Spacer()
+                DatePicker("", selection: $logDate, in: ...Date(), displayedComponents: .date)
+                    .labelsHidden()
+                    .datePickerStyle(.compact)
+                    .environment(\.locale, Locale(identifier: "zh_CN"))
+            }
+            .padding(.vertical, 2)
+
+            GlassDivider()
+
+            HStack(spacing: 8) {
+                Text("体重")
+                    .font(.system(size: 15))
+                Spacer()
+                TextField("—", text: $logWeight)
+                    .font(.system(size: 16, weight: .medium, design: .rounded))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 82)
+                    .focused($focused, equals: .logWeight)
+                Text("kg")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .frame(width: 24, alignment: .leading)
+            }
+            .padding(.vertical, 3)
+
+            GlassDivider()
+
+            HStack(spacing: 8) {
+                Text("体脂")
+                    .font(.system(size: 15))
+                Spacer()
+                TextField("—", text: $logBodyFat)
+                    .font(.system(size: 16, weight: .medium, design: .rounded))
+                    .keyboardType(.decimalPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 82)
+                    .focused($focused, equals: .logBodyFat)
+                Text("%")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .frame(width: 24, alignment: .leading)
+            }
+            .padding(.vertical, 3)
+
+            Button {
+                saveBodyLog()
+            } label: {
+                Label("保存到这一天", systemImage: "checkmark.circle")
+            }
+            .buttonStyle(GlassButtonStyle(prominent: true))
+            .padding(.top, 4)
+
+            if !store.bodyLog.isEmpty {
+                GlassDivider()
+
+                HStack {
+                    Text("最近记录")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("共 \(store.bodyLog.count) 条")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.top, 2)
+
+                let recent = Array(store.bodyLog.suffix(6).reversed())
+                ForEach(recent) { e in
+                    HStack(spacing: 8) {
+                        Text(dayText(e.date))
+                            .font(.system(size: 13))
+                        Text("第 \(store.fitnessDay(e.date)) 天")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        if let w = e.weight {
+                            Text(String(format: "%.1f", w))
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .monospacedDigit()
+                            Text("kg")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                        if let bf = e.bodyFat {
+                            Text(String(format: "%.1f%%", bf))
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundColor(Color(red: 1.0, green: 0.45, blue: 0.32))
+                        }
+                    }
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                    .contextMenu {
+                        Button {
+                            logDate = e.date
+                            logWeight = e.weight.map { String(format: "%.1f", $0) } ?? ""
+                            logBodyFat = e.bodyFat.map { String(format: "%.1f", $0) } ?? ""
+                        } label: {
+                            Label("填到上面的表单", systemImage: "square.and.pencil")
+                        }
+                        Button {
+                            store.setProgramStart(e.date)
+                            showToast("曲线起点改为 \(dayText(e.date))")
+                        } label: {
+                            Label("设为曲线第 1 天", systemImage: "flag")
+                        }
+                        Button(role: .destructive) {
+                            store.deleteBodyLog(id: e.id)
+                        } label: {
+                            Label("删除这条", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+
+            Text("成长页的体重/体脂曲线就是这些点。补记历史日期，曲线会立刻补上。")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .glass()
+    }
+
+    private func saveBodyLog() {
+        let w = Double(logWeight.replacingOccurrences(of: ",", with: ".")
+                        .replacingOccurrences(of: "，", with: "."))
+        let bf = Double(logBodyFat.replacingOccurrences(of: ",", with: ".")
+                        .replacingOccurrences(of: "，", with: "."))
+        let hasW = (w ?? 0) > 0
+        let hasBF = (bf ?? 0) > 0
+        guard hasW || hasBF else {
+            showToast("体重和体脂至少填一项")
+            return
+        }
+
+        let day = Calendar.current.startOfDay(for: logDate)
+        store.logBody(weight: hasW ? w : nil, bodyFat: hasBF ? bf : nil, date: day)
+
+        // 记的是最新一天，就顺手同步成档案里的当前值
+        if let latest = store.bodyLog.last,
+           Calendar.current.isDate(latest.date, inSameDayAs: day) {
+            var p = store.profile
+            if let w = w, w > 0 { p.weight = w }
+            if let bf = bf, bf > 0 { p.bodyFat = bf }
+            store.profile = p
+        }
+
+        logWeight = ""
+        logBodyFat = ""
+        hideKeyboard()
+        showToast("已记录 \(dayText(day))")
+    }
+
+    private func dayText(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = "M月d日"
+        return f.string(from: d)
     }
 
     // MARK: - 身体指标
@@ -377,7 +563,7 @@ struct ProfileView: View {
 
     private var aboutCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            GlassRow(title: "版本", value: "3.0.0")
+            GlassRow(title: "版本", value: "4.0.0")
             GlassDivider()
             GlassRow(title: "界面", value: "Liquid Glass")
             GlassDivider()

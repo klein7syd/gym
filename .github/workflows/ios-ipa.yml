@@ -1,6 +1,6 @@
 name: Build iOS IPA
 
-# REPS 2.0 —— 纯 SwiftUI 原生 App（不再是网页壳）。
+# REPS 4.0 —— 纯 SwiftUI 原生 App，底部栏用系统 TabView。
 # 本机是 Windows，借 GitHub 的 macOS 编译，产出未签名 IPA，
 # 下载后用 Sideloadly / AltStore 自己签名装到 iPhone。
 
@@ -16,17 +16,24 @@ on:
 jobs:
   build:
     name: 编译并打包未签名 IPA
-    runs-on: macos-14
+    runs-on: macos-latest
     timeout-minutes: 40
 
     steps:
       - name: 拉取代码
         uses: actions/checkout@v4
 
-      - name: 环境信息
+      - name: 选最新的 Xcode
         run: |
+          set -euo pipefail
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          LATEST=$(python3 -c 'import glob,re;xs=[(tuple(int(x) for x in re.search(r"Xcode_?([0-9.]+)",p).group(1).split(".")),p) for p in glob.glob("/Applications/Xcode*.app")];xs.sort();print(xs[-1][1] if xs else "")')
+          echo "选中: $LATEST"
+          if [ -n "$LATEST" ]; then
+            sudo xcode-select -s "$LATEST/Contents/Developer"
+          fi
           xcodebuild -version
-          sw_vers
+          echo "iOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
 
       - name: 安装 XcodeGen
         run: brew install xcodegen

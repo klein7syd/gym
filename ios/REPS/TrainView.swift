@@ -41,9 +41,9 @@ struct TrainView: View {
                     sessionFooter
                 }
                 .padding(.horizontal, 20)
-                .padding(.bottom, 118)
+                .padding(.bottom, 28)
             }
-            .background(Color.clear)
+            .background { AppBackground() }
             .navigationTitle("训练")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {

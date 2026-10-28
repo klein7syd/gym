@@ -23,9 +23,9 @@ struct GrowthView: View {
                     historySection
                 }
                 .padding(.horizontal, 20)
-                .padding(.bottom, 118)
+                .padding(.bottom, 28)
             }
-            .background(Color.clear)
+            .background { AppBackground() }
             .navigationTitle("成长")
             .sheet(item: $detailSession) { s in
                 SessionDetailView(session: s)

@@ -1,466 +1,666 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-// MARK: - 音乐页（Apple Music 风格：大封面、细线条、留白优先）
+// MARK: - 音乐
+//
+// 参照 Apple Music 的极简结构：大标题 + 常驻搜索栏 + 列表 + 底部迷你播放条，
+// 点开是铺满全屏的播放页。搜索直接查 Apple Music 曲库，点歌在 App 内播放，
+// 不再把用户甩到别的 App。
 
 struct MusicView: View {
-    @ObservedObject var player = AudioPlayer.shared
-    @ObservedObject var store = Store.shared
-    @ObservedObject var apple = AppleMusicService.shared
+    @ObservedObject private var hub = MusicHub.shared
+    @ObservedObject private var store = Store.shared
 
-    enum Source: String, CaseIterable, Identifiable {
-        case local = "本地"
-        case apple = "Apple Music"
-        case netease = "网易云"
-        var id: String { rawValue }
-    }
-
-    @State private var source: Source = .local
+    @State private var query = ""
+    @State private var results: [ITunesTrack] = []
+    @State private var isSearching = false
+    @State private var message: String?
     @State private var showPicker = false
-    @State private var appleQuery = ""
-    @State private var neteaseQuery = ""
+    @State private var showPlayer = false
+    @State private var searchTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 22) {
-                    sourcePicker
-                        .padding(.top, 4)
-
-                    if source == .local {
-                        localPanel
-                    } else if source == .apple {
-                        applePanel
+                VStack(alignment: .leading, spacing: 18) {
+                    if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                        if hub.current != nil { nowPlayingCard }
+                        localSection
+                        tipCard
                     } else {
-                        neteasePanel
+                        searchSection
                     }
                 }
                 .padding(.horizontal, 20)
+                .padding(.top, 8)
                 .padding(.bottom, 120)
             }
+            .background { AppBackground() }
             .scrollDismissesKeyboard(.interactively)
-            .background(Color.clear)
+            .searchable(text: $query,
+                        placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: "搜索 Apple Music")
+            .onSubmit(of: .search) { runSearch() }
+            .onChange(of: query) { newValue in
+                if newValue.trimmingCharacters(in: .whitespaces).isEmpty {
+                    results = []
+                    message = nil
+                    isSearching = false
+                }
+            }
             .navigationTitle("音乐")
             .toolbar {
-                if source == .local {
-                    ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
                         Button {
                             showPicker = true
                         } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 16, weight: .semibold))
+                            Label("导入本地音乐", systemImage: "square.and.arrow.down")
                         }
+                        Button {
+                            NeteaseService.openApp()
+                        } label: {
+                            Label("打开网易云音乐", systemImage: "waveform")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 17))
                     }
                 }
-                KeyboardDoneBar()
+            }
+            .safeAreaInset(edge: .bottom) {
+                if hub.current != nil, !showPlayer {
+                    MiniPlayerBar { showPlayer = true }
+                }
             }
             .sheet(isPresented: $showPicker) {
                 DocumentPicker(contentTypes: [.audio], allowsMultiple: true) { urls in
-                    let n = player.importFiles(urls)
-                    if n > 0 && player.tracks.count == n {
-                        player.select(index: 0)
+                    let n = hub.importFiles(urls)
+                    if n > 0, hub.localTracks.count == n {
+                        hub.playLocal(at: 0)
                     }
+                }
+            }
+            .fullScreenCover(isPresented: $showPlayer) {
+                NowPlayingView()
+            }
+        }
+    }
+
+    // MARK: - 搜索
+
+    private func runSearch() {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return }
+        searchTask?.cancel()
+        isSearching = true
+        message = nil
+        results = []
+        searchTask = Task {
+            do {
+                let list = try await ITunesAPI.search(q)
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    results = list
+                    isSearching = false
+                    if list.isEmpty { message = "没搜到「\(q)」，换个关键词试试。" }
+                }
+            } catch {
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    isSearching = false
+                    message = "网络不通，搜不到曲库。检查一下网络再试。"
                 }
             }
         }
     }
 
-    // MARK: - 来源切换
-
-    private var sourcePicker: some View {
-        HStack(spacing: 4) {
-            ForEach(Source.allCases) { s in
-                Button {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
-                        source = s
-                    }
-                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                } label: {
-                    Text(s.rawValue)
-                        .font(.system(size: 13, weight: source == s ? .semibold : .medium))
-                        .foregroundColor(source == s ? .primary : .secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 9)
-                        .background {
-                            if source == s {
-                                Capsule(style: .continuous)
-                                    .fill(.ultraThinMaterial)
-                                    .overlay(Capsule(style: .continuous)
-                                        .strokeBorder(Color.white.opacity(0.45), lineWidth: 0.7))
-                                    .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
-                            }
-                        }
+    private var searchSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if isSearching {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("正在搜 Apple Music")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
                 }
-                .buttonStyle(ScaleButtonStyle())
+                .padding(.vertical, 30)
+                .frame(maxWidth: .infinity)
             }
-        }
-        .padding(4)
-        .glassInner(cornerRadius: 24)
-    }
 
-    // MARK: - 本地面板
-
-    private var localPanel: some View {
-        VStack(spacing: 24) {
-            AlbumArt(title: player.currentTrack?.title ?? "REPS", size: 266)
-                .padding(.top, 6)
-
-            VStack(spacing: 6) {
-                Text(player.currentTrack?.title ?? "还没有音乐")
-                    .font(.system(size: 21, weight: .bold))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                Text(player.tracks.isEmpty
-                     ? "点右上角导入手机里的音频"
-                     : "本地音乐 · 第 \(player.currentIndex + 1) / \(player.tracks.count) 首")
+            if let msg = message {
+                Text(msg)
                     .font(.system(size: 13))
                     .foregroundColor(.secondary)
+                    .padding(.vertical, 20)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
 
-            VStack(spacing: 2) {
-                Slider(value: Binding(get: { player.currentTime },
-                                      set: { player.seek(to: $0) }),
-                       in: 0...max(1, player.duration))
-                    .tint(.primary)
-                    .disabled(player.currentTrack == nil)
-                HStack {
-                    Text(AudioPlayer.formatTime(player.currentTime))
-                    Spacer()
-                    Text(AudioPlayer.formatTime(player.duration))
-                }
-                .font(.system(size: 11, weight: .medium))
-                .monospacedDigit()
-                .foregroundColor(.secondary)
-            }
-
-            HStack(spacing: 52) {
-                Button { player.previous() } label: {
-                    Image(systemName: "backward.fill").font(.system(size: 25))
-                }
-                Button { player.toggle() } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 38))
-                        .frame(width: 54, height: 54)
-                }
-                Button { player.next() } label: {
-                    Image(systemName: "forward.fill").font(.system(size: 25))
-                }
-            }
-            .foregroundColor(.primary)
-            .disabled(player.tracks.isEmpty)
-
-            playlistCard
-        }
-    }
-
-    private var playlistCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("待播列表")
-                    .font(.system(size: 13, weight: .semibold))
+            if !results.isEmpty {
+                Text("Apple Music 曲库 · \(results.count) 首")
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.secondary)
-                Spacer()
-                Text("\(player.tracks.count) 首")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 16)
-            .padding(.top, 14)
-            .padding(.bottom, 6)
 
-            if player.tracks.isEmpty {
-                Button {
-                    showPicker = true
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "square.and.arrow.down")
-                        Text("导入音乐")
-                    }
-                    .font(.system(size: 15, weight: .medium))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 18)
-                }
-                .buttonStyle(.plain)
-            } else {
-                ForEach(Array(player.tracks.enumerated()), id: \.element.id) { i, t in
-                    Button {
-                        player.select(index: i)
-                    } label: {
-                        HStack(spacing: 12) {
-                            AlbumArt(title: t.title, size: 40)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(t.title)
-                                    .font(.system(size: 15, weight: i == player.currentIndex ? .semibold : .regular))
-                                    .foregroundColor(i == player.currentIndex ? .accentColor : .primary)
-                                    .lineLimit(1)
-                                Text("本地音乐")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            if i == player.currentIndex && player.isPlaying {
-                                Image(systemName: "waveform")
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.accentColor)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 9)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            player.removeTracks(at: IndexSet(integer: i))
-                        } label: {
-                            Label("移除", systemImage: "trash")
-                        }
-                    }
-                }
-                .padding(.bottom, 8)
-            }
-
-            if let err = player.errorMessage {
-                Text(err)
-                    .font(.system(size: 11))
-                    .foregroundColor(.red)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 10)
-            }
-        }
-        .glass()
-    }
-
-    // MARK: - Apple Music 面板
-
-    private var applePanel: some View {
-        VStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(LinearGradient(colors: [Color(red: 0.98, green: 0.30, blue: 0.42),
-                                                          Color(red: 0.95, green: 0.20, blue: 0.55)],
-                                                 startPoint: .topLeading, endPoint: .bottomTrailing))
-                            .frame(width: 48, height: 48)
-                        Image(systemName: "music.note")
-                            .font(.system(size: 21, weight: .semibold))
-                            .foregroundColor(.white)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Apple Music")
-                            .font(.system(size: 17, weight: .semibold))
-                        Text(appleStateText)
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                }
-
-                Text("搜 Apple Music 曲库，点结果唤起 Apple Music 播放。会员曲目按你的订阅状态决定能否完整播放。")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 10) {
-                    if apple.state != .authorized {
-                        Button {
-                            apple.requestAuthorization()
-                        } label: {
-                            Text("授权接入")
-                        }
-                        .buttonStyle(GlassButtonStyle(prominent: true, tint: Color(red: 0.95, green: 0.25, blue: 0.42)))
-                    }
-                    Button {
-                        apple.openAppleMusicSearch(nil)
-                    } label: {
-                        Text("打开 Apple Music")
-                    }
-                    .buttonStyle(GlassButtonStyle())
-                }
-            }
-            .padding(16)
-            .glass()
-
-            searchField(text: $appleQuery, placeholder: "搜索歌曲、歌手",
-                        tint: Color(red: 0.95, green: 0.25, blue: 0.42)) {
-                apple.search(appleQuery)
-            }
-
-            if apple.isSearching {
-                ProgressView().padding(.vertical, 24)
-            }
-
-            if let msg = apple.message {
-                Text(msg)
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            if !apple.results.isEmpty {
                 VStack(spacing: 0) {
-                    ForEach(apple.results) { r in
-                        Button {
-                            apple.openResult(r)
-                        } label: {
-                            HStack(spacing: 12) {
-                                artwork(r.artworkURL, size: 46)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(r.title)
-                                        .font(.system(size: 15, weight: .medium))
-                                        .foregroundColor(.primary)
-                                        .lineLimit(1)
-                                    Text(r.artist)
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                                Image(systemName: "play.circle.fill")
-                                    .font(.system(size: 22))
-                                    .foregroundColor(Color(red: 0.95, green: 0.25, blue: 0.42))
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 9)
-                            .contentShape(Rectangle())
+                    ForEach(Array(results.enumerated()), id: \.element.id) { i, t in
+                        trackRow(t, index: i)
+                        if i != results.count - 1 {
+                            Divider().padding(.leading, 66)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
-                .padding(.vertical, 6)
+                .padding(.vertical, 4)
                 .glass()
             }
         }
     }
 
-    private var appleStateText: String {
-        switch apple.state {
-        case .authorized: return "已授权，可搜索曲库"
-        case .denied: return "未授权 · 将跳转到 Apple Music"
-        case .unavailable: return "系统不支持直接接入 · 使用跳转"
-        case .unknown: return "未接入 · 点下方授权"
-        }
-    }
-
-    // MARK: - 网易云面板
-
-    private var neteasePanel: some View {
-        VStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(Color(red: 0.90, green: 0.14, blue: 0.16))
-                            .frame(width: 48, height: 48)
-                        Image(systemName: "waveform")
-                            .font(.system(size: 20, weight: .semibold))
-                            .foregroundColor(.white)
-                    }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("网易云音乐")
-                            .font(.system(size: 17, weight: .semibold))
-                        Text("跳转到官方 App 播放")
+    private func trackRow(_ t: ITunesTrack, index: Int) -> some View {
+        Button {
+            playTrack(t)
+        } label: {
+            HStack(spacing: 12) {
+                artwork(url: t.artworkSmall, size: 50, seed: t.title)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(t.title)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        if !t.hasPreview {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 8))
+                        }
+                        Text(t.hasPreview ? t.artist : "\(t.artist) · 仅 Apple Music")
                             .font(.system(size: 12))
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
-                    Spacer()
                 }
-
-                Text("网易云没有开放第三方播放接口，所以这里做的是把歌名带过去，播放和会员曲库都在官方客户端完成。")
-                    .font(.system(size: 12))
+                Spacer(minLength: 4)
+                Text(MusicHub.formatTime(t.duration))
+                    .font(.system(size: 11, design: .rounded))
+                    .monospacedDigit()
                     .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack(spacing: 10) {
-                    Button {
-                        NeteaseService.openApp()
-                    } label: {
-                        Text("打开网易云")
-                    }
-                    .buttonStyle(GlassButtonStyle(prominent: true, tint: Color(red: 0.90, green: 0.14, blue: 0.16)))
-
-                    Button {
-                        NeteaseService.openWeb()
-                    } label: {
-                        Text("网页版")
-                    }
-                    .buttonStyle(GlassButtonStyle())
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            if let u = t.storeURL {
+                Button {
+                    UIApplication.shared.open(u)
+                } label: {
+                    Label("在 Apple Music 打开完整版", systemImage: "arrow.up.forward.app")
                 }
             }
-            .padding(16)
-            .glass()
-
-            searchField(text: $neteaseQuery, placeholder: "歌名 / 歌手",
-                        tint: Color(red: 0.90, green: 0.14, blue: 0.16)) {
-                NeteaseService.search(neteaseQuery)
+            Button {
+                NeteaseService.search("\(t.title) \(t.artist)")
+            } label: {
+                Label("去网易云搜这首歌", systemImage: "waveform")
             }
-
-            Text("没装网易云时会自动用浏览器打开 music.163.com。")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    // MARK: - 通用组件
+    private func playTrack(_ t: ITunesTrack) {
+        let playable = results.filter { $0.hasPreview }
+        guard let pos = playable.firstIndex(where: { $0.id == t.id }) else {
+            message = "「\(t.title)」没有试听片段，用长按菜单去 Apple Music 听完整版。"
+            return
+        }
+        let items: [PlayItem] = playable.compactMap { makeItem($0) }
+        guard items.indices.contains(pos) else { return }
+        hub.play(items: items, startingAt: pos)
+        showPlayer = true
+    }
 
-    private func searchField(text: Binding<String>, placeholder: String,
-                             tint: Color, onSubmit: @escaping () -> Void) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15))
-                .foregroundColor(.secondary)
-            TextField(placeholder, text: text)
-                .font(.system(size: 15))
-                .submitLabel(.search)
-                .onSubmit(onSubmit)
-            if !text.wrappedValue.isEmpty {
-                Button {
-                    text.wrappedValue = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14))
+    private func makeItem(_ r: ITunesTrack) -> PlayItem? {
+        guard let p = r.preview else { return nil }
+        return PlayItem(id: r.id,
+                        title: r.title,
+                        artist: r.artist,
+                        artworkURL: r.artworkLarge,
+                        fileURL: p,
+                        source: .preview,
+                        externalURL: r.storeURL,
+                        fullDuration: r.duration)
+    }
+
+    // MARK: - 正在播放卡片
+
+    private var nowPlayingCard: some View {
+        VStack(spacing: 14) {
+            Button {
+                showPlayer = true
+            } label: {
+                HStack(spacing: 14) {
+                    artwork(url: hub.current?.artworkURL, size: 76, seed: hub.current?.title ?? "REPS")
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("正在播放")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.secondary)
+                        Text(hub.current?.title ?? "")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        Text(hub.current?.artist.isEmpty == false
+                             ? (hub.current?.artist ?? "")
+                             : (hub.current?.subtitle ?? ""))
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            VStack(spacing: 2) {
+                Slider(value: Binding(get: { hub.currentTime },
+                                      set: { hub.seek(to: $0) }),
+                       in: 0...max(1, hub.duration))
+                    .tint(.primary)
+                HStack {
+                    Text(MusicHub.formatTime(hub.currentTime))
+                    Spacer()
+                    Text(MusicHub.formatTime(hub.duration))
+                }
+                .font(.system(size: 10, weight: .medium))
+                .monospacedDigit()
+                .foregroundColor(.secondary)
+            }
+
+            HStack(spacing: 44) {
+                Button { hub.previous() } label: {
+                    Image(systemName: "backward.fill").font(.system(size: 21))
+                }
+                Button { hub.toggle() } label: {
+                    Image(systemName: hub.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 30))
+                        .frame(width: 40, height: 40)
+                }
+                Button { hub.next(userInitiated: true) } label: {
+                    Image(systemName: "forward.fill").font(.system(size: 21))
+                }
+            }
+            .foregroundColor(.primary)
+        }
+        .padding(16)
+        .glass()
+    }
+
+    // MARK: - 本地音乐
+
+    private var localSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("本地音乐")
+                    .font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Button {
+                    showPicker = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 14, weight: .semibold))
                 }
                 .buttonStyle(.plain)
             }
-            Button(action: onSubmit) {
-                Text("搜索")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(tint))
+
+            if hub.localTracks.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "music.note.list")
+                        .font(.system(size: 26, weight: .light))
+                        .foregroundColor(.secondary)
+                    Text("还没有本地音乐")
+                        .font(.system(size: 14, weight: .medium))
+                    Text("从「文件」里导入 mp3 / m4a / wav，存进沙盒后永久有效")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button {
+                        showPicker = true
+                    } label: {
+                        Text("导入音乐")
+                    }
+                    .buttonStyle(GlassButtonStyle())
+                    .padding(.top, 2)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+                .padding(.horizontal, 14)
+                .glass()
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(hub.localTracks.enumerated()), id: \.element.id) { i, t in
+                        let playing = hub.current?.source == .local
+                            && hub.current?.title == t.title
+                        Button {
+                            hub.playLocal(at: i)
+                            showPlayer = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                AlbumArt(title: t.title, size: 46)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(t.title)
+                                        .font(.system(size: 15, weight: playing ? .semibold : .regular))
+                                        .foregroundColor(playing ? .accentColor : .primary)
+                                        .lineLimit(1)
+                                    Text("本地音乐")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer(minLength: 4)
+                                if playing && hub.isPlaying {
+                                    Image(systemName: "waveform")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.accentColor)
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                hub.removeTracks(at: IndexSet(integer: i))
+                            } label: {
+                                Label("移除", systemImage: "trash")
+                            }
+                        }
+                        if i != hub.localTracks.count - 1 {
+                            Divider().padding(.leading, 70)
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+                .glass()
             }
-            .buttonStyle(.plain)
+
+            if let err = hub.errorMessage {
+                Text(err)
+                    .font(.system(size: 11))
+                    .foregroundColor(.red)
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .glassInner(cornerRadius: 20)
     }
 
-    private func artwork(_ url: URL?, size: CGFloat) -> some View {
+    private var tipCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("关于曲库")
+                .font(.system(size: 12, weight: .semibold))
+            Text("搜索走的是 Apple Music 曲库，能播的是 30 秒官方试听片段（完整曲目受版权限制只能在 Apple Music 里放）。本地导入的音乐不受此限制，可以整首循环。")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .glass(cornerRadius: 20, shadow: false)
+    }
+
+    // MARK: - 封面
+
+    private func artwork(url: URL?, size: CGFloat, seed: String) -> some View {
         Group {
             if let url = url {
-                AsyncImage(url: url) { img in
-                    img.resizable().aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.primary.opacity(0.08))
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    default:
+                        AlbumArt(title: seed, size: size)
+                    }
                 }
             } else {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.primary.opacity(0.08))
-                    .overlay(
-                        Image(systemName: "music.note")
-                            .font(.system(size: size * 0.3))
-                            .foregroundColor(.secondary)
-                    )
+                AlbumArt(title: seed, size: size)
             }
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.08, style: .continuous))
+    }
+}
+
+// MARK: - 底部迷你播放条
+
+struct MiniPlayerBar: View {
+    @ObservedObject private var hub = MusicHub.shared
+    var onTap: () -> Void
+
+    var body: some View {
+        HStack(spacing: 11) {
+            Button(action: onTap) {
+                HStack(spacing: 11) {
+                    artwork
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(hub.current?.title ?? "")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                        Text(hub.current?.artist.isEmpty == false
+                             ? (hub.current?.artist ?? "")
+                             : (hub.current?.subtitle ?? ""))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button { hub.toggle() } label: {
+                Image(systemName: hub.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(.primary)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button { hub.next(userInitiated: true) } label: {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 15))
+                    .foregroundColor(.primary)
+                    .frame(width: 30, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .glass(cornerRadius: 22)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 4)
+    }
+
+    private var artwork: some View {
+        Group {
+            if let u = hub.current?.artworkURL {
+                AsyncImage(url: u) { phase in
+                    if case .success(let img) = phase {
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        AlbumArt(title: hub.current?.title ?? "", size: 40)
+                    }
+                }
+            } else {
+                AlbumArt(title: hub.current?.title ?? "", size: 40)
+            }
+        }
+        .frame(width: 40, height: 40)
+        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+}
+
+// MARK: - 全屏播放页
+
+struct NowPlayingView: View {
+    @ObservedObject private var hub = MusicHub.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var dragOffset: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            AppBackground()
+
+            VStack(spacing: 0) {
+                // 顶部把手 + 收起
+                HStack {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .frame(width: 38, height: 38)
+                            .glassInner(cornerRadius: 19)
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                    Text("正在播放")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Menu {
+                        Toggle(isOn: $hub.repeatOne) {
+                            Label("单曲循环", systemImage: "repeat.1")
+                        }
+                        if let u = hub.current?.externalURL {
+                            Button {
+                                UIApplication.shared.open(u)
+                            } label: {
+                                Label("在 Apple Music 打开完整版", systemImage: "arrow.up.forward.app")
+                            }
+                        }
+                        if let c = hub.current {
+                            Button {
+                                NeteaseService.search("\(c.title) \(c.artist)")
+                            } label: {
+                                Label("去网易云搜这首歌", systemImage: "waveform")
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .frame(width: 38, height: 38)
+                            .glassInner(cornerRadius: 19)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+
+                Spacer(minLength: 12)
+
+                cover
+
+                Spacer(minLength: 16)
+
+                VStack(spacing: 5) {
+                    Text(hub.current?.title ?? "没有正在播放的音乐")
+                        .font(.system(size: 22, weight: .bold))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                    Text(hub.current?.artist.isEmpty == false
+                         ? (hub.current?.artist ?? "")
+                         : (hub.current?.subtitle ?? ""))
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 24)
+
+                Spacer(minLength: 18)
+
+                progress
+
+                controls
+
+                Spacer(minLength: 26)
+            }
+            .padding(.bottom, 10)
+        }
+        .offset(y: max(0, dragOffset))
+        .gesture(
+            DragGesture()
+                .onChanged { v in dragOffset = v.translation.height }
+                .onEnded { v in
+                    if v.translation.height > 120 {
+                        dismiss()
+                    } else {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                            dragOffset = 0
+                        }
+                    }
+                }
+        )
+    }
+
+    private var cover: some View {
+        Group {
+            if let u = hub.current?.artworkURL {
+                AsyncImage(url: u) { phase in
+                    if case .success(let img) = phase {
+                        img.resizable().aspectRatio(contentMode: .fit)
+                    } else {
+                        AlbumArt(title: hub.current?.title ?? "REPS", size: 300)
+                    }
+                }
+            } else {
+                AlbumArt(title: hub.current?.title ?? "REPS", size: 300)
+            }
+        }
+        .frame(maxWidth: 300)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.22), radius: 26, y: 16)
+        .padding(.horizontal, 36)
+        .scaleEffect(hub.isPlaying ? 1 : 0.94)
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hub.isPlaying)
+    }
+
+    private var progress: some View {
+        VStack(spacing: 2) {
+            Slider(value: Binding(get: { hub.currentTime },
+                                  set: { hub.seek(to: $0) }),
+                   in: 0...max(1, hub.duration))
+                .tint(.primary)
+            HStack {
+                Text(MusicHub.formatTime(hub.currentTime))
+                Spacer()
+                Text(MusicHub.formatTime(hub.duration))
+            }
+            .font(.system(size: 11, weight: .medium))
+            .monospacedDigit()
+            .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 28)
+    }
+
+    private var controls: some View {
+        HStack(spacing: 46) {
+            Button { hub.previous() } label: {
+                Image(systemName: "backward.fill").font(.system(size: 26))
+            }
+            Button { hub.toggle() } label: {
+                Image(systemName: hub.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 42))
+                    .frame(width: 56, height: 56)
+            }
+            Button { hub.next(userInitiated: true) } label: {
+                Image(systemName: "forward.fill").font(.system(size: 26))
+            }
+        }
+        .foregroundColor(.primary)
+        .padding(.top, 18)
     }
 }
 
@@ -474,9 +674,9 @@ struct AlbumArt: View {
     var body: some View {
         let colors = Self.palette(for: title)
         ZStack {
-            RoundedRectangle(cornerRadius: size * 0.07, style: .continuous)
+            RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
                 .fill(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
-            RoundedRectangle(cornerRadius: size * 0.07, style: .continuous)
+            RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
                 .fill(LinearGradient(colors: [Color.white.opacity(0.26), Color.clear],
                                      startPoint: .topLeading, endPoint: .center))
             Image(systemName: "music.note")
@@ -485,12 +685,9 @@ struct AlbumArt: View {
         }
         .frame(width: size, height: size)
         .overlay(
-            RoundedRectangle(cornerRadius: size * 0.07, style: .continuous)
+            RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
         )
-        .shadow(color: colors[0].opacity(size > 100 ? 0.32 : 0),
-                radius: size > 100 ? 26 : 0,
-                y: size > 100 ? 14 : 0)
     }
 
     static func palette(for title: String) -> [Color] {
