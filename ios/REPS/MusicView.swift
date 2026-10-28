@@ -13,13 +13,15 @@ struct MusicView: View {
     @ObservedObject var hub = MusicHub.shared
     @ObservedObject var store = Store.shared
     @ObservedObject var am = AppleMusicService.shared
+    @ObservedObject var player = PlayerPresenter.shared
 
     @State private var query = ""
     /// 资料库搜索结果（全部可直接完整播放，不再有 30 秒试听）
     @State private var libraryHits: [MPMediaItem] = []
+    /// 命中的专辑（按专辑排版用，带整张曲目）
+    @State private var albumHits: [AppleMusicService.Album] = []
     @State private var didSearch = false
     @State private var showPicker = false
-    @State private var showPlayer = false
 
     /// 音乐页的两个界面：Apple Music 曲库 / 本地音乐
     enum SourceTab: String, CaseIterable, Identifiable {
@@ -94,9 +96,12 @@ struct MusicView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                if hub.current != nil, !showPlayer {
-                    MiniPlayerBar { showPlayer = true }
+                if hub.current != nil, !player.isOpen {
+                    MiniPlayerBar { player.open() }
                 }
+            }
+            .navigationDestination(for: String.self) { key in
+                AlbumDetailView(albumKey: key)
             }
             .sheet(isPresented: $showPicker) {
                 DocumentPicker(contentTypes: [.audio], allowsMultiple: true) { urls in
@@ -106,9 +111,6 @@ struct MusicView: View {
                     }
                 }
             }
-            .fullScreenCover(isPresented: $showPlayer) {
-                NowPlayingView()
-            }
         }
     }
 
@@ -116,11 +118,9 @@ struct MusicView: View {
 
     @ViewBuilder
     private var applePane: some View {
-        if hub.current != nil, hub.current?.source != .local {
-            nowPlayingCard
-        }
-
-        appleMusicCard
+        // 搜索页不放播放器卡片、不放「已连接」卡片 —— 底下已经有迷你播放条了。
+        // 只有还没授权时才留一行极简提示，否则搜不出任何东西。
+        if !am.isGranted { authRow }
 
         if query.trimmingCharacters(in: .whitespaces).isEmpty {
             searchHint
@@ -160,69 +160,41 @@ struct MusicView: View {
         .padding(.horizontal, 18)
     }
 
-    // MARK: - Apple Music 完整播放授权
+    // MARK: - 未授权时的一行提示
 
-    private var appleMusicCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "music.note.tv")
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundColor(.accentColor)
-                Text("Apple Music 资料库")
-                    .font(.system(size: 14, weight: .semibold))
-                Spacer()
-                if am.isGranted {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 10))
-                        Text("已连接")
-                            .font(.system(size: 10, weight: .medium))
-                    }
-                    .foregroundColor(.green)
-                }
-            }
-
-            Text(am.isGranted
-                 ? am.statusHint
-                 : "开启后直接读你 Apple Music 资料库，会员能听的歌在这里整首放，不会有 30 秒限制。")
-                .font(.system(size: 11))
+    @ViewBuilder
+    private var authRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "music.note.tv")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.accentColor)
+            Text(am.access == .denied ? "资料库权限被关闭，搜不到歌" : "需要读取你的 Apple Music 资料库")
+                .font(.system(size: 12))
                 .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if !am.isGranted {
-                Button {
-                    if am.access == .denied {
-                        if let u = URL(string: UIApplication.openSettingsURLString) {
-                            UIApplication.shared.open(u)
-                        }
-                    } else {
-                        am.requestAccess({ ok in
-                            if ok { runLibrarySearch() }
-                        })
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Button {
+                if am.access == .denied {
+                    if let u = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(u)
                     }
-                } label: {
-                    Text(am.access == .denied ? "去设置里允许" : "授权 Apple Music")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 34)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.14)))
-                        .foregroundColor(.accentColor)
+                } else {
+                    am.requestAccess { ok in
+                        if ok { runLibrarySearch() }
+                    }
                 }
-                .buttonStyle(ScaleButtonStyle())
-            } else if am.isIndexing {
-                HStack(spacing: 6) {
-                    ProgressView().scaleEffect(0.7)
-                    Text("正在读取资料库")
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
+            } label: {
+                Text(am.access == .denied ? "去设置" : "授权")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.accentColor)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.13)))
             }
+            .buttonStyle(ScaleButtonStyle())
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .glass(cornerRadius: 20, shadow: false)
+        .padding(.horizontal, 4)
     }
-
 
     // MARK: - 资料库搜索
     //
@@ -234,65 +206,26 @@ struct MusicView: View {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard tab == .apple, am.isGranted, !q.isEmpty else {
             libraryHits = []
+            albumHits = []
             didSearch = false
             return
         }
         didSearch = true
         libraryHits = am.search(q)
+        albumHits = am.albums(from: libraryHits)
         // 前几行的封面先排进后台，滚动时不至于一片灰
         ArtworkStore.shared.prefetch(libraryHits, side: 160, limit: 12)
     }
 
-    // MARK: - 搜索结果（按专辑排版）
+    // MARK: - 搜索结果（专辑网格 + 歌曲）
     //
-    // 一条专辑一组：左边专辑封面 + 专辑名 + 艺人·曲目数，下面按碟号/音轨号排曲目。
-    // 这样搜「周杰伦」出来的是几张唱片，而不是一大串看不出归属的散歌。
-    // 队列仍然是整串结果（扁平顺序），点组内第几首就从头接着放，不会串。
+    // 照 Apple Music 的版式：先「专辑」两列网格（封面 / 专辑名 / 艺人·年份），
+    // 点进一张专辑能看到**整张**曲目（不再只有命中的那几首），下面是「歌曲」直接开播。
+    // 队列仍是整串结果，persistentID 精确寻址，点哪首就是哪首。
 
-    private struct AlbumGroup: Identifiable {
-        let id: String
-        let title: String
-        let artist: String
-        let sampleID: MPMediaEntityPersistentID
-        let tracks: [(index: Int, item: MPMediaItem)]
-    }
-
-    private var albumGroups: [AlbumGroup] {
-        var order: [String] = []
-        var buckets: [String: [Int]] = [:]
-        var meta: [String: (title: String, artist: String, sample: MPMediaEntityPersistentID)] = [:]
-
-        for (i, m) in libraryHits.enumerated() {
-            let album = (m.albumTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let artist = (m.albumArtist ?? m.artist ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            // 没有专辑名的歌（散装单曲）统一归到「未知专辑」，否则一首一个标题栏
-            let key = album.isEmpty ? "\u{2205}" : "\(album)|\(artist)"
-            if buckets[key] == nil {
-                order.append(key)
-                buckets[key] = []
-                meta[key] = (album.isEmpty ? "未知专辑" : album, artist, m.persistentID)
-            }
-            buckets[key]?.append(i)
-        }
-
-        return order.compactMap { key in
-            guard let idxs = buckets[key], let info = meta[key] else { return nil }
-            let tracks = idxs.map { (index: $0, item: libraryHits[$0]) }
-                .sorted {
-                    if $0.item.discNumber != $1.item.discNumber {
-                        return $0.item.discNumber < $1.item.discNumber
-                    }
-                    if $0.item.albumTrackNumber != $1.item.albumTrackNumber {
-                        return $0.item.albumTrackNumber < $1.item.albumTrackNumber
-                    }
-                    return $0.index < $1.index
-                }
-            return AlbumGroup(id: key,
-                              title: info.title,
-                              artist: info.artist,
-                              sampleID: info.sample,
-                              tracks: tracks)
-        }
+    private var tileSide: CGFloat {
+        let w = UIScreen.main.bounds.width - 40      // 页面左右各 20
+        return max(120, floor((w - 12) / 2))         // 两列，列间距 12
     }
 
     @ViewBuilder
@@ -315,108 +248,92 @@ struct MusicView: View {
                     .padding(.vertical, 20)
             }
         } else {
-            let groups = albumGroups
-            HStack(spacing: 6) {
-                Text("我的资料库 · \(libraryHits.count) 首")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
-                if groups.count > 1 {
-                    Text("· \(groups.count) 张专辑")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.secondary)
-                }
-                Text("全部可完整播放")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.green)
-                Spacer()
-            }
-            .padding(.horizontal, 4)
+            if !albumHits.isEmpty {
+                sectionHeader("专辑", trailing: "\(albumHits.count) 张")
 
-            LazyVStack(spacing: 14) {
-                ForEach(groups) { g in
-                    albumCard(g)
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
+                                    GridItem(.flexible(), spacing: 12)],
+                          alignment: .leading,
+                          spacing: 18) {
+                    ForEach(albumHits) { a in
+                        albumTile(a)
+                    }
+                }
+                .padding(.bottom, 6)
+            }
+
+            sectionHeader("歌曲", trailing: "\(libraryHits.count) 首")
+
+            LazyVStack(spacing: 0) {
+                ForEach(libraryHits.indices, id: \.self) { i in
+                    libraryRow(libraryHits[i], index: i)
+                    if i != libraryHits.count - 1 {
+                        Divider().padding(.leading, 66)
+                    }
                 }
             }
+            .padding(.vertical, 4)
+            .glass()
         }
     }
 
-    /// 一张专辑：标题栏 + 曲目表
-    private func albumCard(_ g: AlbumGroup) -> some View {
-        VStack(spacing: 0) {
+    private func sectionHeader(_ title: String, trailing: String) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+                .font(.system(size: 17, weight: .bold))
+            Spacer(minLength: 4)
+            Text(trailing)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 4)
+    }
+
+    /// 专辑格子：封面 + 标题 + 艺人·年份（点进去是整张专辑）
+    private func albumTile(_ a: AppleMusicService.Album) -> some View {
+        NavigationLink(value: a.id) {
+            VStack(alignment: .leading, spacing: 6) {
+                TrackArt(title: a.title, mediaID: a.sampleID, size: tileSide, corner: 6)
+                    .shadow(color: .black.opacity(0.10), radius: 8, y: 4)
+
+                Text(a.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+
+                Text(a.subtitle)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(width: tileSide, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 歌曲行：封面 + 歌名 + 艺人·专辑 + 时长
+    private func libraryRow(_ m: MPMediaItem, index: Int) -> some View {
+        let playing = hub.current?.mediaID == m.persistentID
+        return Button {
+            playLibrary(at: index)
+        } label: {
             HStack(spacing: 12) {
-                TrackArt(title: g.title, mediaID: g.sampleID, size: 54)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(g.title)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.primary)
+                TrackArt(title: m.title ?? "未知曲目",
+                         mediaID: m.persistentID,
+                         size: 50)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(m.title ?? "未知曲目")
+                        .font(.system(size: 15, weight: playing ? .semibold : .regular))
+                        .foregroundColor(playing ? .accentColor : .primary)
                         .lineLimit(1)
-                    Text(g.artist.isEmpty ? "\(g.tracks.count) 首" : "\(g.artist) · \(g.tracks.count) 首")
+                    Text(librarySubtitle(m))
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
-                Button {
-                    guard let first = g.tracks.first else { return }
-                    playLibrary(at: first.index)
-                } label: {
-                    Image(systemName: "play.circle.fill")
-                        .font(.system(size: 26))
-                        .foregroundColor(.accentColor)
-                        .frame(width: 40, height: 40)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(ScaleButtonStyle(scale: 0.88))
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
-
-            Divider().padding(.leading, 12)
-
-            ForEach(g.tracks.indices, id: \.self) { i in
-                let t = g.tracks[i]
-                albumTrackRow(t.item, position: i + 1, index: t.index, showArtist: g.artist.isEmpty)
-                if i != g.tracks.count - 1 {
-                    Divider().padding(.leading, 44)
-                }
-            }
-            .padding(.bottom, 4)
-        }
-        .glass()
-    }
-
-    private func albumTrackRow(_ m: MPMediaItem,
-                               position: Int,
-                               index: Int,
-                               showArtist: Bool) -> some View {
-        let playing = hub.current?.mediaID == m.persistentID
-        let no = m.albumTrackNumber > 0 ? m.albumTrackNumber : position
-        return Button {
-            playLibrary(at: index)
-        } label: {
-            HStack(spacing: 10) {
-                Text("\(no)")
-                    .font(.system(size: 12, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundColor(.secondary)
-                    .frame(width: 22, alignment: .trailing)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(m.title ?? "未知曲目")
-                        .font(.system(size: 15, weight: playing ? .semibold : .regular))
-                        .foregroundColor(playing ? .accentColor : .primary)
-                        .lineLimit(1)
-                    if showArtist {
-                        Text(m.artist ?? "")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: 6)
-
                 if playing && hub.isPlaying {
                     Image(systemName: "waveform")
                         .font(.system(size: 13))
@@ -428,30 +345,26 @@ struct MusicView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 14)
+            .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    /// 点哪首放哪首：队列就是当前看到的这串结果，每首带着 persistentID，不会串歌。
+    private func librarySubtitle(_ m: MPMediaItem) -> String {
+        let artist = m.artist ?? ""
+        let album = m.albumTitle ?? ""
+        if artist.isEmpty { return album }
+        return album.isEmpty ? artist : "\(artist) · \(album)"
+    }
+
+    /// 点哪首放哪首：队列就是当前这串结果，每首带着 persistentID，不会串歌。
     private func playLibrary(at index: Int) {
-        let items: [PlayItem] = libraryHits.map { m in
-            PlayItem(id: String(m.persistentID),
-                     title: m.title ?? "未知曲目",
-                     artist: m.artist ?? "",
-                     artworkURL: nil,
-                     fileURL: nil,
-                     externalURL: m.assetURL,
-                     fullDuration: m.playbackDuration,
-                     source: .appleMusic,
-                     mediaID: m.persistentID)
-        }
+        let items = MusicHub.items(from: libraryHits)
         guard items.indices.contains(index) else { return }
         hub.play(items: items, startingAt: index)
-        showPlayer = true
+        player.open()
     }
 
     // MARK: - 正在播放卡片
@@ -465,28 +378,16 @@ struct MusicView: View {
     private var nowPlayingCard: some View {
         VStack(spacing: 14) {
             Button {
-                showPlayer = true
+                player.open()
             } label: {
                 HStack(spacing: 14) {
                     TrackArt(title: hub.current?.title ?? "REPS",
                              mediaID: hub.current?.mediaID,
                              size: 76)
                     VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 5) {
-                            Text("正在播放")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundColor(.secondary)
-                            Text(hub.isPlayingFullVersion ? "完整版" : (hub.current?.subtitle ?? ""))
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundColor(hub.isPlayingFullVersion ? .green : .secondary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(
-                                    Capsule().fill(
-                                        (hub.isPlayingFullVersion ? Color.green : Color.primary).opacity(0.12)
-                                    )
-                                )
-                        }
+                        Text("正在播放")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.secondary)
                         Text(hub.current?.title ?? "")
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundColor(.primary)
@@ -632,7 +533,7 @@ struct MusicView: View {
         let playing = hub.current?.source == .local && hub.current?.title == track.title
         return Button {
             hub.playLocal(at: index)
-            showPlayer = true
+            player.open()
         } label: {
             HStack(spacing: 12) {
                 AlbumArt(title: track.title, size: 46)
@@ -748,97 +649,280 @@ struct MiniPlayerBar: View {
     }
 }
 
+// MARK: - 专辑详情
+//
+// 从搜索结果的专辑格子点进来。这里列的是**整张**专辑的曲目（不只是搜索命中的那几首），
+// 版式照 Apple Music：居中大封面、专辑名、艺人·年份、两个胶囊按钮、带音轨号的曲目表。
+
+struct AlbumDetailView: View {
+    let albumKey: String
+
+    @ObservedObject var hub = MusicHub.shared
+    @ObservedObject var am = AppleMusicService.shared
+    @ObservedObject var player = PlayerPresenter.shared
+
+    private var album: AppleMusicService.Album? { am.album(forKey: albumKey) }
+
+    private var coverSide: CGFloat {
+        min(UIScreen.main.bounds.width * 0.52, 200)
+    }
+
+    var body: some View {
+        ScrollView {
+            if let a = album {
+                VStack(spacing: 0) {
+                    header(a)
+                    actions(a)
+                    trackList(a)
+                }
+                .padding(.bottom, 120)
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "music.note.list")
+                        .font(.system(size: 22, weight: .light))
+                        .foregroundColor(.secondary)
+                    Text("这张专辑还没读出来")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("回上一页，用右上角菜单刷新一次资料库再进来。")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 60)
+            }
+        }
+        .background { AppBackground() }
+        .navigationTitle(album?.title ?? "专辑")
+        .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            if hub.current != nil, !player.isOpen {
+                MiniPlayerBar { player.open() }
+            }
+        }
+    }
+
+    // MARK: 头部
+
+    private func header(_ a: AppleMusicService.Album) -> some View {
+        VStack(spacing: 12) {
+            TrackArt(title: a.title, mediaID: a.sampleID, size: coverSide, corner: 8)
+                .shadow(color: .black.opacity(0.16), radius: 18, y: 10)
+
+            VStack(spacing: 3) {
+                Text(a.displayArtist)
+                    .font(.system(size: 20, weight: .bold))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                Text([a.title, a.year > 0 ? "\(a.year) 年" : ""]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " · "))
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                Text("\(a.items.count) 首")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 24)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 12)
+    }
+
+    private func actions(_ a: AppleMusicService.Album) -> some View {
+        HStack(spacing: 12) {
+            Button {
+                play(a, shuffled: false)
+            } label: {
+                Label("播放", systemImage: "play.fill")
+            }
+            .buttonStyle(GlassButtonStyle())
+
+            Button {
+                play(a, shuffled: true)
+            } label: {
+                Label("随机播放", systemImage: "shuffle")
+            }
+            .buttonStyle(GlassButtonStyle())
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 14)
+    }
+
+    // MARK: 曲目
+
+    private func trackList(_ a: AppleMusicService.Album) -> some View {
+        VStack(spacing: 0) {
+            ForEach(a.items.indices, id: \.self) { i in
+                trackRow(a.items[i], position: i + 1, album: a, index: i)
+                if i != a.items.count - 1 {
+                    Divider().padding(.leading, 56)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .glass()
+        .padding(.horizontal, 20)
+    }
+
+    private func trackRow(_ m: MPMediaItem,
+                          position: Int,
+                          album a: AppleMusicService.Album,
+                          index: Int) -> some View {
+        let playing = hub.current?.mediaID == m.persistentID
+        let no = m.albumTrackNumber > 0 ? m.albumTrackNumber : position
+        return Button {
+            play(a, shuffled: false, startAt: index)
+        } label: {
+            HStack(spacing: 10) {
+                Text("\(no)")
+                    .font(.system(size: 12, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(playing ? .accentColor : .secondary)
+                    .frame(width: 22, alignment: .trailing)
+
+                Text(m.title ?? "未知曲目")
+                    .font(.system(size: 15, weight: playing ? .semibold : .regular))
+                    .foregroundColor(playing ? .accentColor : .primary)
+                    .lineLimit(2)
+
+                Spacer(minLength: 6)
+
+                if playing && hub.isPlaying {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 13))
+                        .foregroundColor(.accentColor)
+                } else {
+                    Text(MusicHub.formatTime(m.playbackDuration))
+                        .font(.system(size: 11))
+                        .monospacedDigit()
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 14)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: 播放
+
+    private func play(_ a: AppleMusicService.Album, shuffled: Bool, startAt: Int = 0) {
+        var media = a.items
+        var start = startAt
+        if shuffled {
+            media.shuffle()
+            start = 0
+        }
+        let items = MusicHub.items(from: media)
+        guard items.indices.contains(start) else { return }
+        hub.play(items: items, startingAt: start)
+        player.open()
+    }
+}
+
 // MARK: - 全屏播放页
 //
-// 版式按 Apple Music 的播放页排（iOS 17/18 那一版）：
+// 版式跟 Apple Music 对齐（左边距统一 24，所有元素共用一条中轴）：
 //
 //            ── 抓手 ──
 //   ⌄          正在播放           ⋯
-//        [      封面      ]
-//   歌名（20 粗，左对齐）
-//   艺人（20 常规，灰，左对齐）
-//   ══════ 进度条 ══════
+//        [      封面      ]      屏宽 76%，上限 322
+//   歌名（22 粗，左对齐）
+//   艺人（17，灰，左对齐）
+//   ══════ 进度条 8pt ══════
 //   0:12                  -3:20
 //   ☰     ⏮     ▶     ⏭     🔁
-//   🔈 ══════ 音量 ══════ 🔊
-//   [ Apple Music 底部那排歌词/待播/AirPlay 换成训练状态 ]
+//   🔈 ═════ 音量 ═════ 🔊
+//   [ 训练状态卡 ]  ← 点开是训练面板
 //
-// 背景是灰色液态玻璃（灰底 + 半透明材质 + 中性柔光），整页固定深色，
-// 所以进度条 / 音量条是白色（97% 白 + 0.5pt 高光描边），不再随浅色模式变黑。
-// 封面按 Apple Music 的比例取屏宽 76%、上限 320。
+// 背景是灰色液态玻璃，整页固定深色，所以进度 / 音量条是白色。
 
 struct NowPlayingView: View {
     @ObservedObject var hub = MusicHub.shared
     @ObservedObject var store = Store.shared
     @ObservedObject var rest = RestTimer.shared
-    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var player = PlayerPresenter.shared
+
     @State private var dragOffset: CGFloat = 0
     @State private var showQueue = false
+    @State private var showTraining = false
     /// 拖动进度条时的临时秒数（nil = 没在拖，跟随播放器）
     @State private var scrub: Double?
 
+    /// 全页统一左右留白：封面、标题、进度条、按钮、音量都对齐到这条线
+    private let inset: CGFloat = 24
+
     var body: some View {
         GeometryReader { geo in
-            // 除封面以外的固定高度合计
-            let fixed: CGFloat = 372
-            // 封面比例照 Apple Music：约屏宽 76%，上限 320，小屏也不会顶满两边
-            let side = max(130, min(geo.size.width * 0.76, geo.size.height - fixed, 320))
+            // 除封面以外的固定高度（抓手 + 头部 + 标题 + 进度 + 控制 + 音量 + 训练卡）
+            let fixed: CGFloat = 396
+            let side = max(120, min(geo.size.width * 0.76, geo.size.height - fixed, 322))
 
             VStack(spacing: 0) {
                 grabber
 
                 header
 
-                Spacer(minLength: 8)
+                Spacer(minLength: 12)
 
                 cover(side: side)
 
-                Spacer().frame(height: 22)
+                Spacer(minLength: 26)
+                    .frame(height: 30)
 
                 titleBlock
 
-                Spacer().frame(height: 20)
+                Spacer(minLength: 22)
+                    .frame(height: 26)
 
                 progress
 
-                Spacer().frame(height: 10)
+                Spacer(minLength: 14)
+                    .frame(height: 20)
 
                 controls
 
-                Spacer().frame(height: 8)
+                Spacer(minLength: 16)
+                    .frame(height: 22)
 
                 volume
 
-                Spacer(minLength: 10)
+                Spacer(minLength: 12)
 
                 trainingBar
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 4)
+                    .padding(.bottom, 8)
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .background { playerBackground }
         .offset(y: max(0, dragOffset))
-        // 播放页固定深色：灰色玻璃底 + 白色文字 / 白色条，浅色系统下也一致
+        .clipShape(RoundedRectangle(cornerRadius: dragOffset > 4 ? 24 : 0, style: .continuous))
         .environment(\.colorScheme, .dark)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showQueue) {
             QueueSheet()
         }
+        .sheet(isPresented: $showTraining) {
+            TrainingSheet()
+        }
     }
 
-    /// 灰色液态玻璃底：灰底 + 半透明材质 + 一层薄白涂层 + 两团中性柔光。
-    /// 不用彩色渐变，只有灰度，所以不会发蓝发紫。
+    // MARK: 背景
+
+    /// 灰色液态玻璃：灰底 + 半透明材质 + 中性柔光 + 薄白釉面。
+    /// 只有灰度没有色相，所以不会发蓝发紫。
     private var playerBackground: some View {
         ZStack {
-            // 灰底：比系统背景更深一档，白条才有对比
             Color(white: 0.13)
 
-            // 液态玻璃主体：透出身后内容再磨一遍
-            Rectangle()
-                .fill(.ultraThinMaterial)
+            Rectangle().fill(.ultraThinMaterial)
 
-            // 玻璃上的中性柔光（只有灰，没有色相）
             Circle()
                 .fill(Color.white.opacity(0.10))
                 .frame(width: 420, height: 420)
@@ -851,10 +935,8 @@ struct NowPlayingView: View {
                 .blur(radius: 150)
                 .offset(x: 130, y: 300)
 
-            // 极薄的表面涂层，给玻璃一点“釉面”感
             Color.white.opacity(0.03)
         }
-        // 材质必须按深色渲染，否则浅色系统下会被磨成灰白，白条看不见
         .environment(\.colorScheme, .dark)
         .ignoresSafeArea()
         .allowsHitTesting(false)
@@ -867,15 +949,18 @@ struct NowPlayingView: View {
             .fill(Color.secondary.opacity(0.30))
             .frame(width: 36, height: 5)
             .padding(.top, 6)
-            .padding(.bottom, 2)
+            .padding(.bottom, 4)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+            .gesture(dismissDrag)
     }
 
-    // MARK: 顶部：左收起 · 中「正在播放」· 右更多
+    // MARK: 顶部
 
     private var header: some View {
         HStack(spacing: 0) {
             Button {
-                dismiss()
+                player.close()
             } label: {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 17, weight: .semibold))
@@ -906,18 +991,16 @@ struct NowPlayingView: View {
                 } label: {
                     Label("播放列表", systemImage: "list.bullet")
                 }
+                Button {
+                    showTraining = true
+                } label: {
+                    Label("打开训练面板", systemImage: "figure.strengthtraining.traditional")
+                }
                 if let u = hub.current?.externalURL {
                     Button {
                         UIApplication.shared.open(u)
                     } label: {
                         Label("在 Apple Music 打开", systemImage: "arrow.up.forward.app")
-                    }
-                }
-                if let c = hub.current {
-                    Button {
-                        NeteaseService.search("\(c.title) \(c.artist)")
-                    } label: {
-                        Label("去网易云搜这首歌", systemImage: "waveform")
                     }
                 }
             } label: {
@@ -930,21 +1013,26 @@ struct NowPlayingView: View {
         }
         .padding(.horizontal, 8)
         .contentShape(Rectangle())
-        .gesture(
-            DragGesture()
-                .onChanged { v in
-                    if v.translation.height > 0 { dragOffset = v.translation.height }
-                }
-                .onEnded { v in
-                    if v.translation.height > 110 {
-                        dismiss()
-                    } else {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                            dragOffset = 0
-                        }
+        .gesture(dismissDrag)
+    }
+
+    /// 往下拖收回：底下的菜单一直可见，所以不会出现黑边；
+    /// 拖过阈值就关，没拖够就弹回原位。
+    private var dismissDrag: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { v in
+                if v.translation.height > 0 { dragOffset = v.translation.height }
+            }
+            .onEnded { v in
+                let far = v.translation.height > 110 || v.predictedEndTranslation.height > 260
+                if far {
+                    player.close()
+                } else {
+                    withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+                        dragOffset = 0
                     }
                 }
-        )
+            }
     }
 
     // MARK: 封面
@@ -954,40 +1042,39 @@ struct NowPlayingView: View {
                  mediaID: hub.current?.mediaID,
                  size: side,
                  corner: 8)
-            .shadow(color: .black.opacity(0.28), radius: 22, y: 14)
-            .scaleEffect(hub.isPlaying ? 1 : 0.95)
-            .animation(.spring(response: 0.42, dampingFraction: 0.82), value: hub.isPlaying)
+            .shadow(color: .black.opacity(0.30), radius: 24, y: 16)
+            .animation(.easeOut(duration: 0.25), value: side)
     }
 
-    // MARK: 歌名 / 艺人（Apple Music 都是左对齐，贴封面左边）
+    // MARK: 歌名 / 艺人
 
     private var titleBlock: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(hub.current?.title ?? "没有正在播放的音乐")
-                .font(.system(size: 20, weight: .semibold))
+                .font(.system(size: 22, weight: .semibold))
                 .foregroundColor(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
 
             Text(subtitleText)
-                .font(.system(size: 20, weight: .regular))
+                .font(.system(size: 17, weight: .regular))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
+                .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20)
+        .padding(.horizontal, inset)
     }
 
     private var subtitleText: String {
         guard let c = hub.current else { return "" }
-        return c.artist.isEmpty ? (c.subtitle) : c.artist
+        return c.artist.isEmpty ? c.subtitle : c.artist
     }
 
     // MARK: 进度
 
     private var progress: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 6) {
             GlassBar(progress: progressRatio,
                      onScrub: { v in scrub = v * max(1, hub.duration) },
                      onCommit: { v in
@@ -1005,7 +1092,7 @@ struct NowPlayingView: View {
             .monospacedDigit()
             .foregroundColor(.secondary)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, inset)
     }
 
     private var progressRatio: Double {
@@ -1020,8 +1107,7 @@ struct NowPlayingView: View {
 
     // MARK: 播放控制
     //
-    // Apple Music 是「随机 / 上一首 / 播放 / 下一首 / 循环」，
-    // 这里第一个换成「播放列表」（用户要的），位置和尺寸保持一致：纯图标、无圆底。
+    // Apple Music 是「随机 / 上一首 / 播放 / 下一首 / 循环」，第一个位置这里换成播放列表。
 
     private var controls: some View {
         HStack(spacing: 0) {
@@ -1084,7 +1170,7 @@ struct NowPlayingView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 22)
+        .padding(.horizontal, inset - 4)
     }
 
     // MARK: 系统音量
@@ -1099,104 +1185,96 @@ struct NowPlayingView: View {
                 .font(.system(size: 10))
                 .foregroundColor(.secondary)
         }
-        .padding(.horizontal, 22)
+        .padding(.horizontal, inset)
     }
 
     // MARK: 底部训练状态（顶掉 Apple Music 的歌词 / 待播 / AirPlay）
 
     private var trainingBar: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
-                    Image(systemName: "figure.strengthtraining.traditional")
-                        .font(.system(size: 9, weight: .semibold))
-                    if store.current != nil {
-                        Text("正在训练")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("· 第 \(setCount) 组")
-                            .font(.system(size: 10))
-                    } else {
-                        Text("还没开始训练")
-                            .font(.system(size: 10, weight: .semibold))
-                    }
-                }
-                .foregroundColor(.secondary)
-
-                Text(store.current != nil ? store.currentExercise.name : "去训练页记第一组")
-                    .font(.system(size: 14, weight: .semibold))
-                    .lineLimit(1)
-
-                Text(trainingDetail)
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+        HStack(alignment: .center, spacing: 10) {
+            if rest.isRunning {
+                MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 50)
             }
 
-            Spacer(minLength: 4)
-
-            if rest.isRunning {
-                MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 48)
-                VStack(spacing: 5) {
-                    Button {
-                        rest.add(seconds: 30)
-                    } label: {
-                        Text("+30")
+            Button {
+                showTraining = true
+            } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "figure.strengthtraining.traditional")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(store.current != nil ? "正在训练 · 第 \(setCount) 组" : "还没开始训练")
                             .font(.system(size: 10, weight: .semibold))
-                            .frame(width: 40, height: 20)
-                            .background(Capsule().fill(Color.primary.opacity(0.07)))
-                            .foregroundColor(.primary)
                     }
-                    .buttonStyle(ScaleButtonStyle())
+                    .foregroundColor(.secondary)
 
-                    Button {
-                        rest.skip()
-                    } label: {
-                        Text("跳过")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .frame(width: 40, height: 20)
-                    }
-                    .buttonStyle(ScaleButtonStyle())
+                    Text(store.current != nil ? store.currentExercise.name : "打开训练面板")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+
+                    Text(trainingDetail)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
-            } else {
-                Button {
-                    rest.start(seconds: store.restSeconds)
-                } label: {
-                    VStack(spacing: 1) {
-                        Image(systemName: "timer")
-                            .font(.system(size: 14, weight: .medium))
-                        Text("\(store.restSeconds)s")
-                            .font(.system(size: 9, weight: .medium))
-                    }
-                    .foregroundColor(.accentColor)
-                    .frame(width: 58, height: 44)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.accentColor.opacity(0.13))
-                    )
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            VStack(spacing: 6) {
+                if rest.isRunning {
+                    smallButton("+30") { rest.add(seconds: 30) }
+                } else {
+                    smallButton("\(store.restSeconds)s") { rest.start(seconds: store.restSeconds) }
                 }
-                .buttonStyle(ScaleButtonStyle())
-                .disabled(store.current == nil)
-                .opacity(store.current == nil ? 0.35 : 1)
+                smallButton("完成", tint: .accentColor) { completeSet() }
+                smallButton("跳过") { rest.skip() }
             }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.vertical, 12)
         .glass(cornerRadius: 22)
     }
 
+    private func smallButton(_ title: String,
+                             tint: Color = .primary,
+                             action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(tint)
+                .frame(width: 52, height: 26)
+                .background(Capsule().fill(tint.opacity(0.14)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(ScaleButtonStyle(scale: 0.92))
+    }
+
     private var setCount: Int {
-        store.currentExercise.sets.count
+        store.current == nil ? 0 : store.currentExercise.sets.count
     }
 
     private var trainingDetail: String {
         guard store.current != nil else {
-            return "组数、重量、休息计时都同步显示在这里"
+            return "点这里记组、调重量，和训练页同步"
         }
         if let s = store.currentExercise.sets.last {
             return "上一组 \(fmtWeight(s.w)) kg × \(s.r) · 共 \(setCount) 组"
         }
-        return "这个动作还没记录，调好重量再点「完成一组」"
+        return "这个动作还没记录，调好重量再点「完成」"
+    }
+
+    private func completeSet() {
+        guard store.current != nil else {
+            showTraining = true
+            return
+        }
+        _ = store.ensureSession()
+        store.logSet(weight: store.lastWeight, reps: store.lastReps)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        rest.start(seconds: store.restSeconds)
     }
 
     private func fmtWeight(_ w: Double) -> String {
@@ -1211,52 +1289,83 @@ struct NowPlayingView: View {
 struct QueueSheet: View {
     @ObservedObject var hub = MusicHub.shared
     @Environment(\.dismiss) private var dismiss
+    @State private var editMode: EditMode = .inactive
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
                     ForEach(Array(hub.queue.enumerated()), id: \.element.id) { i, item in
-                        Button {
-                            hub.jump(to: i)
-                        } label: {
-                            HStack(spacing: 10) {
-                                TrackArt(title: item.title,
-                                         mediaID: item.mediaID,
-                                         size: 40)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.title)
-                                        .font(.system(size: 14, weight: i == hub.index ? .semibold : .regular))
-                                        .foregroundColor(i == hub.index ? .accentColor : .primary)
-                                        .lineLimit(1)
-                                    Text(item.subtitle)
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                }
-                                Spacer(minLength: 4)
-                                if i == hub.index {
-                                    Image(systemName: hub.isPlaying ? "waveform" : "pause.fill")
-                                        .font(.system(size: 12))
-                                        .foregroundColor(.accentColor)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
+                        row(index: i, item: item)
+                    }
+                    // 拖动右边把手改顺序（进编辑模式后把手才出来）
+                    .onMove { source, dest in
+                        hub.reorder(from: source, to: dest)
                     }
                 } header: {
                     Text("\(hub.queue.count) 首 · \(hub.repeatMode.label)")
+                } footer: {
+                    Text(editMode.isEditing
+                         ? "按住右侧把手拖动，松手即生效。"
+                         : "点右上「排序」可以拖动调整播放顺序。")
                 }
             }
+            .environment(\.editMode, $editMode)
             .navigationTitle("播放列表")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(editMode.isEditing ? "完成排序" : "排序") {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            editMode = editMode.isEditing ? .inactive : .active
+                        }
+                    }
+                    .disabled(hub.queue.count < 2)
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("完成") { dismiss() }
+                    Button("关闭") { dismiss() }
+                        .fontWeight(.semibold)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func row(index i: Int, item: PlayItem) -> some View {
+        let content = HStack(spacing: 10) {
+            TrackArt(title: item.title,
+                     mediaID: item.mediaID,
+                     size: 40)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: 14, weight: i == hub.index ? .semibold : .regular))
+                    .foregroundColor(i == hub.index ? .accentColor : .primary)
+                    .lineLimit(1)
+                Text(item.subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if i == hub.index {
+                Image(systemName: hub.isPlaying ? "waveform" : "pause.fill")
+                    .font(.system(size: 12))
+                    .foregroundColor(.accentColor)
+            }
+        }
+        .contentShape(Rectangle())
+
+        if editMode.isEditing {
+            // 编辑模式下不做 Button，否则点行会去跳播而不是拖动
+            content
+        } else {
+            Button {
+                hub.jump(to: i)
+            } label: {
+                content
+            }
+            .buttonStyle(.plain)
         }
     }
 }

@@ -39,6 +39,12 @@ final class AppleMusicService: ObservableObject {
     /// 资料库全量索引，搜索就遍历它
     private var entries: [Entry] = []
     private var byID: [MPMediaEntityPersistentID: MPMediaItem] = [:]
+    /// 专辑索引：id → 整张专辑（含全部曲目）
+    private var albumByKey: [String: Album] = [:]
+    /// 单曲 → 所属专辑 id
+    private var albumKeyByItem: [MPMediaEntityPersistentID: String] = [:]
+    /// 专辑列表，保持资料库里的自然顺序
+    private var albumOrder: [String] = []
     private let work = DispatchQueue(label: "reps.applemusic.index", qos: .userInitiated)
 
     /// 一条可搜索记录。文本都做过规范化，另外带上拼音 / 首字母，
@@ -54,6 +60,27 @@ final class AppleMusicService: ObservableObject {
         let titleInitials: String
         let artistPinyin: String
         let artistInitials: String
+    }
+
+    /// 一张专辑：一条记录带整张的曲目，专辑页就是靠它把没搜到的歌也补全。
+    struct Album: Identifiable, Hashable {
+        let id: String
+        let title: String
+        let artist: String
+        let year: Int
+        let sampleID: MPMediaEntityPersistentID
+        let items: [MPMediaItem]
+
+        var displayArtist: String { artist.isEmpty ? "未知艺人" : artist }
+        var subtitle: String {
+            var parts: [String] = []
+            if !artist.isEmpty { parts.append(artist) }
+            if year > 0 { parts.append("\(year) 年") }
+            return parts.joined(separator: " · ")
+        }
+
+        static func == (l: Album, r: Album) -> Bool { l.id == r.id }
+        func hash(into h: inout Hasher) { h.combine(id) }
     }
 
     /// 系统播放器。applicationMusicPlayer 是 App 内播放，不接管「音乐」App 的播放状态。
@@ -160,16 +187,98 @@ final class AppleMusicService: ObservableObject {
             }
 
             let total = songs.count
+            let albums = Self.makeAlbums(songs)
             DispatchQueue.main.async {
                 self.byKey = exact
                 self.byTitle = titles
                 self.byID = ids
                 self.entries = list
+                self.albumByKey = albums.byKey
+                self.albumKeyByItem = albums.keyByItem
+                self.albumOrder = albums.order
                 self.librarySongCount = total
                 self.isIndexing = false
                 self.indexBuilt = true
             }
         }
+    }
+
+    // MARK: - 专辑索引
+    //
+    // 搜索结果按专辑排版，点进一张专辑要能列出**整张**的曲目（不只是命中的那几首），
+    // 所以这里在后台把「专辑 → 全部曲目」也建一份。
+    // 专辑 id 用「专辑名|专辑艺人」，没有专辑名的归到「未知专辑」。
+
+    private static func albumKey(title: String, artist: String) -> String {
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return "\u{2205}" }
+        let a = (artist.isEmpty ? "" : artist).trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(t)|\(a)"
+    }
+
+    private static func makeAlbums(_ songs: [MPMediaItem])
+        -> (byKey: [String: Album], keyByItem: [MPMediaEntityPersistentID: String], order: [String]) {
+        var buckets: [String: [MPMediaItem]] = [:]
+        var info: [String: (title: String, artist: String, year: Int)] = [:]
+        var keys: [MPMediaEntityPersistentID: String] = [:]
+        var order: [String] = []
+
+        for m in songs {
+            let title = (m.albumTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let artist = (m.albumArtist ?? m.artist ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = albumKey(title: title, artist: artist)
+            if buckets[key] == nil {
+                order.append(key)
+                buckets[key] = []
+                var year = 0
+                if let d = m.releaseDate {
+                    year = Calendar.current.component(.year, from: d)
+                }
+                info[key] = (title.isEmpty ? "未知专辑" : title, artist, year)
+            }
+            buckets[key]?.append(m)
+            keys[m.persistentID] = key
+        }
+
+        var albums: [String: Album] = [:]
+        for key in order {
+            guard let list = buckets[key], let meta = info[key] else { continue }
+            let sorted = list.sorted {
+                if $0.discNumber != $1.discNumber { return $0.discNumber < $1.discNumber }
+                if $0.albumTrackNumber > 0 && $1.albumTrackNumber > 0 &&
+                   $0.albumTrackNumber != $1.albumTrackNumber {
+                    return $0.albumTrackNumber < $1.albumTrackNumber
+                }
+                return ($0.title ?? "") < ($1.title ?? "")
+            }
+            albums[key] = Album(id: key,
+                                title: meta.title,
+                                artist: meta.artist,
+                                year: meta.year,
+                                sampleID: sorted.first?.persistentID ?? 0,
+                                items: sorted)
+        }
+        return (albums, keys, order)
+    }
+
+    func album(forKey key: String) -> Album? { albumByKey[key] }
+
+    func album(containing item: MPMediaItem) -> Album? {
+        guard let key = albumKeyByItem[item.persistentID] else { return nil }
+        return albumByKey[key]
+    }
+
+    /// 把一批搜索结果按专辑归并，顺序按「第一次出现的先后」，
+    /// 这样相关性高的专辑自然排在前面。
+    func albums(from hits: [MPMediaItem]) -> [Album] {
+        var seen = Set<String>()
+        var out: [Album] = []
+        for m in hits {
+            guard let key = albumKeyByItem[m.persistentID],
+                  let a = albumByKey[key] else { continue }
+            if seen.insert(key).inserted { out.append(a) }
+        }
+        return out
     }
 
     /// 按 persistentID 精确取曲目：这就是「点哪首放哪首」的保证，

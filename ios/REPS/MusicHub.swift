@@ -352,6 +352,47 @@ final class MusicHub: NSObject, ObservableObject {
         load(index: i, autoplay: true)
     }
 
+    /// 播放列表里拖动排序。系统播放器的队列是独立的一份，
+    /// 所以顺序一变就得按新顺序重建一次，然后把播放位置找回来，
+    /// 否则「下一首」会按旧顺序走，和界面对不上。
+    func reorder(from source: IndexSet, to destination: Int) {
+        guard !queue.isEmpty else { return }
+        let currentID = queue.indices.contains(index) ? queue[index].id : nil
+        let resumeAt = currentTime
+        let wasPlaying = isPlaying
+
+        queue.move(fromOffsets: source, toOffset: destination)
+
+        guard let cid = currentID,
+              let newIndex = queue.firstIndex(where: { $0.id == cid }) else { return }
+        index = newIndex
+
+        guard engine == .appleMusic else { return }
+        // 强制重建系统队列（签名是顺序敏感的，但显式清一次更稳）
+        mpQueueSignature = []
+        if loadAppleMusic(item: queue[newIndex], autoplay: wasPlaying), resumeAt > 1 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.seek(to: resumeAt)
+            }
+        }
+    }
+
+    /// 把资料库曲目批量转成队列项。搜索结果、专辑页、播放列表都走它，
+    /// persistentID 一并带上，保证点哪首就是哪首。
+    static func items(from media: [MPMediaItem]) -> [PlayItem] {
+        media.map { m in
+            PlayItem(id: String(m.persistentID),
+                     title: m.title ?? "未知曲目",
+                     artist: m.artist ?? "",
+                     artworkURL: nil,
+                     fileURL: nil,
+                     externalURL: m.assetURL,
+                     fullDuration: m.playbackDuration,
+                     source: .appleMusic,
+                     mediaID: m.persistentID)
+        }
+    }
+
     func seek(to seconds: Double) {
         let t = max(0, seconds)
         if engine == .appleMusic {
