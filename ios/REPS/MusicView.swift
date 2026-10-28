@@ -859,6 +859,8 @@ struct NowPlayingView: View {
     @ObservedObject var player = PlayerPresenter.shared
 
     @State private var dragOffset: CGFloat = 0
+    /// 这一轮下拉有没有已经切过窗口配色（只在第一次 onChanged 里做一次）
+    @State private var dismissing = false
     @State private var showQueue = false
     @State private var showTraining = false
     /// 拖动进度条时的临时秒数（nil = 没在拖，跟随播放器）
@@ -1056,26 +1058,37 @@ struct NowPlayingView: View {
     /// 卡片弹回去 → 下一帧 translation 又变大 …… 形成一个正反馈回路，表现为持续抖动，
     /// 而且 `player.pull` 也跟着来回跳，底下 TabView 的缩放 / 压暗 / 圆角同步抖。
     /// `.global` 不随卡片位移变化，拿到的才是手指的真实位移，dragOffset 单调跟随。
+    /// （4.9.4 又验证了一次：抖动是坐标空间的问题，和窗口配色切换是两件事，不要混在一起。）
     private var dismissDrag: some Gesture {
         DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { v in
                 let h = max(0, v.translation.height)
+                // 拖动第一帧：位移只有几 pt、底下几乎还没露出来，就在这一帧把窗口切回浅色。
+                // 这样整个下拉过程中露出来的页面，从头到尾都是最终那一版浅色，不会跳变。
+                if h > 0 && !dismissing {
+                    dismissing = true
+                    player.setDragging(true)
+                    player.beginDismiss()
+                }
                 dragOffset = h
                 // 0…1：拉到 260pt 就算到底，下层同步动
                 player.pull = min(1, h / 260)
-                // 拖动期间不动窗口配色（4.9.2 在这里切过，会触发全窗口重绘，也是闪烁来源）。
-                // 现在 forceDark 一直保持 true，直到 close() 里播放页快滑出去时才切。
             }
             .onEnded { v in
+                dismissing = false
+                player.setDragging(false)
                 let far = v.translation.height > 110 || v.predictedEndTranslation.height > 260
                 if far {
+                    // 配色在 beginDismiss 里已经切好，这里直接走 close() 的下滑分支
                     player.close()
                 } else {
-                    // 弹回：纯位置回弹，配色全程不变（forceDark 一直是 true），不会有闪
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
                         dragOffset = 0
                         player.pull = 0
                     }
+                    // 弹回原位后再把窗口切回深色（0.36s 后，弹回动画 0.34s）；
+                    // 若这期间用户又开始拖，回调里有 isDragging 守卫，不会被拉回深色。
+                    player.cancelDismiss()
                 }
             }
     }
