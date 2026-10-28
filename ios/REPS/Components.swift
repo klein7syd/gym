@@ -167,6 +167,30 @@ struct RestRing: View {
     }
 }
 
+// MARK: - 迷你休息环（播放页底部用，与训练页同一个 RestTimer）
+
+struct MiniRestRing: View {
+    let progress: Double
+    let text: String
+    var size: CGFloat = 48
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(Color(UIColor.tertiarySystemFill), lineWidth: size * 0.09)
+            Circle()
+                .trim(from: 0, to: max(0.001, progress))
+                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: size * 0.09, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(.linear(duration: 0.2), value: progress)
+            Text(text)
+                .font(.system(size: size * 0.27, weight: .bold, design: .rounded))
+                .monospacedDigit()
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 // MARK: - 文件选择器
 
 struct DocumentPicker: UIViewControllerRepresentable {

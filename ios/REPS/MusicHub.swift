@@ -7,36 +7,76 @@ import SwiftUI   // remove(atOffsets:) 来自 SwiftUI 对集合的扩展
 
 // MARK: - 可播放条目
 
-/// 本地文件和 Apple Music 试听都走同一个 AVPlayer，
-/// 所以「搜到 → 点开 → 播放页」是完整的，不会中途把用户甩出 App。
+/// 本地文件、Apple Music 曲库歌曲、试听片段都走同一个条目模型。
+/// source 表示「这首歌本来想怎么放」：
+///   .local      —— 沙盒里的文件，AVPlayer 直接放
+///   .appleMusic —— 曲库歌曲，优先交给系统播放器放完整版，失败再退回试听
+///   .preview    —— 没有完整版可用，只放 30 秒官方试听
 struct PlayItem: Identifiable, Equatable {
     enum Source: String {
         case local
         case preview
+        case appleMusic
     }
 
     let id: String
     let title: String
     let artist: String
     let artworkURL: URL?
-    let fileURL: URL
+    let fileURL: URL?          // 本地文件路径，或试听直链
+    let externalURL: URL?      // 去 Apple Music 打开这首歌
+    let fullDuration: Double   // 完整曲目时长（只作参考，实际以播放器为准）
     let source: Source
-    let externalURL: URL?      // 去 Apple Music / 网易云打开这首歌
-    let fullDuration: Double   // 完整曲目时长（试听只有 30 秒）
 
     var isPreview: Bool { source == .preview }
 
     var subtitle: String {
-        isPreview ? "Apple Music 试听" : "本地音乐"
+        switch source {
+        case .local: return "本地音乐"
+        case .preview: return "30 秒试听"
+        case .appleMusic: return "Apple Music 完整版"
+        }
     }
 }
 
 // MARK: - 播放中枢
 
-/// 全局唯一的播放器。本地音乐和 Apple Music 试听共用一套播放控制、
-/// 一套锁屏信息、一套控制中心命令，避免两个播放器互相抢声音。
+/// 全局唯一的播放器。两种引擎：
+///   .av          —— AVPlayer，放本地文件和试听片段
+///   .appleMusic  —— MPMusicPlayerController，放资料库里的完整曲目
+/// 对外只暴露一套控制、一套锁屏信息、一套控制中心命令，
+/// 上层界面不需要关心当前是哪台引擎在响。
 final class MusicHub: NSObject, ObservableObject {
     static let shared = MusicHub()
+
+    enum Engine {
+        case none
+        case av
+        case appleMusic
+    }
+
+    enum RepeatMode: String, CaseIterable {
+        case off
+        case all
+        case one
+
+        var next: RepeatMode {
+            switch self {
+            case .off: return .all
+            case .all: return .one
+            case .one: return .off
+            }
+        }
+        var symbol: String { self == .one ? "repeat.1" : "repeat" }
+        var isOn: Bool { self != .off }
+        var label: String {
+            switch self {
+            case .off: return "不循环"
+            case .all: return "列表循环"
+            case .one: return "单曲循环"
+            }
+        }
+    }
 
     @Published private(set) var queue: [PlayItem] = []
     @Published private(set) var index: Int = 0
@@ -44,17 +84,40 @@ final class MusicHub: NSObject, ObservableObject {
     @Published private(set) var currentTime: Double = 0
     @Published private(set) var duration: Double = 0
     @Published private(set) var errorMessage: String?
-    @Published var repeatOne = false
+    @Published private(set) var engine: Engine = .none
+    /// 完整版播放时，系统给的真实封面（比 iTunes 的 600x600 更准）
+    @Published private(set) var nowArtwork: UIImage?
+
+    private var artworkCache: [MPMediaEntityPersistentID: UIImage] = [:]
+
+    @Published var repeatMode: RepeatMode = .off {
+        didSet {
+            if engine == .appleMusic {
+                AppleMusicService.shared.setRepeat(mpRepeatMode)
+            }
+            updateNowPlaying()
+        }
+    }
 
     private var player: AVPlayer?
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
+    private var ticker: Timer?
     private let store = Store.shared
+
+    /// 系统播放器队列里的位置 → 我们自己 queue 里的位置。
+    /// 完整版队列会跳过那些没匹配上的歌，所以两张下标不是一一对应的。
+    private var indexMap: [Int]?
 
     var current: PlayItem? {
         queue.indices.contains(index) ? queue[index] : nil
     }
     var hasQueue: Bool { !queue.isEmpty }
+
+    /// 当前这首是不是真在放完整版（用于界面标注，避免再说空话）
+    var isPlayingFullVersion: Bool {
+        engine == .appleMusic
+    }
 
     private override init() {
         super.init()
@@ -71,6 +134,14 @@ final class MusicHub: NSObject, ObservableObject {
             try session.setActive(true)
         } catch {
             errorMessage = "音频会话启动失败"
+        }
+    }
+
+    private var mpRepeatMode: MPMusicRepeatMode {
+        switch repeatMode {
+        case .off: return MPMusicRepeatMode.none
+        case .all: return MPMusicRepeatMode.all
+        case .one: return MPMusicRepeatMode.one
         }
     }
 
@@ -104,6 +175,10 @@ final class MusicHub: NSObject, ObservableObject {
     }
 
     private func updateNowPlaying() {
+        // 完整版由系统投送锁屏信息（歌名、封面、时长都是 Apple Music 自己的元数据），
+        // 我们再写一遍反而会把锁屏搞乱，所以这里直接让位。
+        if engine == .appleMusic { return }
+
         var info = [String: Any]()
         info[MPMediaItemPropertyTitle] = current?.title ?? "REPS"
         info[MPMediaItemPropertyArtist] = current?.artist.isEmpty == false
@@ -120,6 +195,7 @@ final class MusicHub: NSObject, ObservableObject {
     /// 用一批曲目开始播，从第 i 首起。
     func play(items: [PlayItem], startingAt i: Int) {
         guard !items.isEmpty else { return }
+        errorMessage = nil
         queue = items
         load(index: max(0, min(i, items.count - 1)), autoplay: true)
     }
@@ -133,6 +209,11 @@ final class MusicHub: NSObject, ObservableObject {
     }
 
     func resume() {
+        if engine == .appleMusic {
+            AppleMusicService.shared.player.play()
+            isPlaying = true
+            return
+        }
         if player == nil {
             guard !queue.isEmpty else { return }
             load(index: index, autoplay: true)
@@ -144,26 +225,63 @@ final class MusicHub: NSObject, ObservableObject {
     }
 
     func pause() {
-        player?.pause()
+        if engine == .appleMusic {
+            AppleMusicService.shared.player.pause()
+        } else {
+            player?.pause()
+        }
         isPlaying = false
         updateNowPlaying()
     }
 
     func stop() {
-        tearDown()
+        if engine == .appleMusic {
+            AppleMusicService.shared.player.stop()
+        }
+        tearDownAV()
+        stopTicker()
+        engine = .none
+        indexMap = nil
+        nowArtwork = nil
         queue = []
         index = 0
         currentTime = 0
         duration = 0
+        isPlaying = false
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     func next(userInitiated: Bool = false) {
         guard !queue.isEmpty else { return }
+
+        if engine == .appleMusic {
+            let mp = AppleMusicService.shared.player
+            if repeatMode == .one {
+                seek(to: 0)
+                mp.play()
+                isPlaying = true
+                return
+            }
+            // 队列里下一首还能完整播，就交给系统 skip，衔接更顺
+            if let map = indexMap,
+               let p = map.firstIndex(of: index),
+               map.indices.contains(p + 1) {
+                mp.skipToNextItem()
+                index = map[p + 1]
+                currentTime = 0
+                if let d = mp.nowPlayingItem?.playbackDuration, d > 0 { duration = d }
+                isPlaying = true
+                return
+            }
+            let target = (index + 1) % queue.count
+            load(index: target, autoplay: true)
+            return
+        }
+
         if index + 1 >= queue.count {
-            if userInitiated && !repeatOne {
+            if userInitiated && repeatMode != .one {
                 load(index: 0, autoplay: true)   // 手动点下一首就绕回开头
-            } else if repeatOne {
+            } else if repeatMode == .one {
                 seek(to: 0)
                 player?.play()
                 isPlaying = true
@@ -177,6 +295,27 @@ final class MusicHub: NSObject, ObservableObject {
 
     func previous() {
         guard !queue.isEmpty else { return }
+
+        if engine == .appleMusic {
+            let mp = AppleMusicService.shared.player
+            if currentTime > 3 {
+                seek(to: 0)
+                return
+            }
+            if let map = indexMap,
+               let p = map.firstIndex(of: index),
+               p > 0 {
+                mp.skipToPreviousItem()
+                index = map[p - 1]
+                currentTime = 0
+                if let d = mp.nowPlayingItem?.playbackDuration, d > 0 { duration = d }
+                isPlaying = true
+                return
+            }
+            load(index: (index - 1 + queue.count) % queue.count, autoplay: true)
+            return
+        }
+
         if currentTime > 3 {
             seek(to: 0)
             return
@@ -184,17 +323,25 @@ final class MusicHub: NSObject, ObservableObject {
         load(index: (index - 1 + queue.count) % queue.count, autoplay: true)
     }
 
-    /// 把当前播放器从一个队列位置跳到另一首（搜索结果里点歌用）。
+    /// 把当前播放器从一个队列位置跳到另一首（搜索结果、播放列表里点歌用）。
     func jump(to i: Int) {
         guard queue.indices.contains(i) else { return }
         load(index: i, autoplay: true)
     }
 
     func seek(to seconds: Double) {
-        let t = CMTime(seconds: max(0, seconds), preferredTimescale: 600)
-        player?.seek(to: t)
-        currentTime = max(0, seconds)
+        let t = max(0, seconds)
+        if engine == .appleMusic {
+            AppleMusicService.shared.player.currentPlaybackTime = t
+        } else {
+            player?.seek(to: CMTime(seconds: t, preferredTimescale: 600))
+        }
+        currentTime = t
         updateNowPlaying()
+    }
+
+    func cycleRepeatMode() {
+        repeatMode = repeatMode.next
     }
 
     // MARK: - 内部装载
@@ -202,12 +349,104 @@ final class MusicHub: NSObject, ObservableObject {
     private func load(index i: Int, autoplay: Bool) {
         guard queue.indices.contains(i) else { return }
         let item = queue[i]
-        tearDownPlayerOnly()
         index = i
         currentTime = 0
+
+        switch item.source {
+        case .local, .preview:
+            loadAV(item: item, autoplay: autoplay)
+        case .appleMusic:
+            if !loadAppleMusic(item: item, autoplay: autoplay) {
+                if item.fileURL != nil {
+                    errorMessage = "「\(item.title)」不在你的 Apple Music 资料库里，先放 30 秒试听。在 Apple Music 里点「+」加入资料库之后就能听完整版。"
+                    loadAV(item: item, autoplay: autoplay)
+                } else {
+                    errorMessage = "「\(item.title)」既不在资料库、也没有试听片段，放不了。"
+                    tearDownAV()
+                    stopTicker()
+                    engine = .none
+                    isPlaying = false
+                    duration = item.fullDuration
+                }
+            }
+        }
+    }
+
+    /// 完整版：从当前队列里挑出所有能在资料库匹配到的歌，组成系统播放器队列。
+    private func loadAppleMusic(item: PlayItem, autoplay: Bool) -> Bool {
+        let svc = AppleMusicService.shared
+        guard svc.isGranted else { return false }
+
+        var pool: [(local: Int, media: MPMediaItem)] = []
+        for (idx, it) in queue.enumerated() where it.source == .appleMusic {
+            if let m = svc.match(title: it.title, artist: it.artist) {
+                pool.append((idx, m))
+            }
+        }
+        guard let pos = pool.firstIndex(where: { $0.local == index }) else { return false }
+
+        tearDownAV()
+        stopTicker()
+
+        let media = pool.map { $0.media }
+        captureArtwork(media[pos])
+        let mp = svc.player
+        mp.stop()
+        mp.setQueue(with: MPMediaItemCollection(items: media))
+        mp.prepareToPlay()
+        mp.nowPlayingItem = media[pos]
+        mp.repeatMode = mpRepeatMode
+        if autoplay {
+            mp.play()
+            isPlaying = true
+        } else {
+            isPlaying = false
+        }
+
+        engine = .appleMusic
+        indexMap = pool.map { $0.local }
+
+        // MPMediaItem.playbackDuration 是非可选的 TimeInterval
+        let fullLength = media[pos].playbackDuration
+        duration = fullLength > 0 ? fullLength : item.fullDuration
+        startTicker()
+        return true
+    }
+
+    /// 资料库封面存在 MPMediaItem 里，取出来给界面用。
+    /// 完整版优先用这张（本地真实封面），没有再退回 iTunes 的 600x600 图。
+    private func captureArtwork(_ item: MPMediaItem) {
+        if let cached = artworkCache[item.persistentID] {
+            nowArtwork = cached
+            return
+        }
+        let img = item.artwork?.image(at: CGSize(width: 600, height: 600))
+        nowArtwork = img
+        if let img = img { artworkCache[item.persistentID] = img }
+    }
+
+    // MARK: - AVPlayer（本地 / 试听）
+
+    private func loadAV(item: PlayItem, autoplay: Bool) {
+        // 从完整版切到试听时，先把系统播放器停掉，否则两个声音会叠在一起
+        if engine == .appleMusic {
+            AppleMusicService.shared.player.stop()
+        }
+        stopTicker()
+        tearDownAV()
+        engine = .av
+        indexMap = nil
+        nowArtwork = nil
+
+        guard let url = item.fileURL else {
+            engine = .none
+            isPlaying = false
+            duration = 0
+            return
+        }
         duration = item.isPreview ? 30 : 0
 
-        let assetItem = AVPlayerItem(url: item.fileURL)
+        let assetItem = AVPlayerItem(url: url)
         let p = AVPlayer(playerItem: assetItem)
         p.automaticallyWaitsToMinimizeStalling = true
         player = p
@@ -230,7 +469,7 @@ final class MusicHub: NSObject, ObservableObject {
             queue: .main
         ) { [weak self] _ in
             guard let self = self else { return }
-            if self.repeatOne {
+            if self.repeatMode == .one {
                 self.seek(to: 0)
                 self.player?.play()
                 self.isPlaying = true
@@ -246,7 +485,7 @@ final class MusicHub: NSObject, ObservableObject {
         updateNowPlaying()
     }
 
-    private func tearDownPlayerOnly() {
+    private func tearDownAV() {
         if let obs = timeObserver, let p = player {
             p.removeTimeObserver(obs)
         }
@@ -257,13 +496,43 @@ final class MusicHub: NSObject, ObservableObject {
         endObserver = nil
         player?.pause()
         player = nil
-        isPlaying = false
     }
 
-    private func tearDown() {
-        tearDownPlayerOnly()
-        currentTime = 0
-        duration = 0
+    // MARK: - 外部引擎轮询
+    //
+    // MPMusicPlayerController 没有 SwiftUI 能订阅的进度属性，
+    // 用 0.4 秒轮询把时间、时长、播放状态、队列位置同步回来。
+
+    private func startTicker() {
+        stopTicker()
+        let t = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
+            self?.tickExternal()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        ticker = t
+    }
+
+    private func stopTicker() {
+        ticker?.invalidate()
+        ticker = nil
+    }
+
+    private func tickExternal() {
+        guard engine == .appleMusic else { return }
+        let mp = AppleMusicService.shared.player
+
+        let cur = mp.currentPlaybackTime
+        if cur.isFinite, cur >= 0 { currentTime = cur }
+        if let d = mp.nowPlayingItem?.playbackDuration, d > 0 { duration = d }
+
+        let playing = (mp.playbackState == .playing)
+        if playing != isPlaying { isPlaying = playing }
+
+        let p = mp.indexOfNowPlayingItem
+        if let map = indexMap, map.indices.contains(p) {
+            let mapped = map[p]
+            if mapped != index { index = mapped }
+        }
     }
 
     // MARK: - 本地音乐
@@ -279,9 +548,9 @@ final class MusicHub: NSObject, ObservableObject {
                             artist: "",
                             artworkURL: nil,
                             fileURL: url,
-                            source: .local,
                             externalURL: nil,
-                            fullDuration: 0)
+                            fullDuration: 0,
+                            source: .local)
         }
     }
 
