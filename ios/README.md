@@ -1,4 +1,4 @@
-# REPS iOS · 4.9.2
+# REPS iOS · 4.9.3
 
 纯 SwiftUI 原生 App（不是网页壳），源码在 `ios/REPS/`，由 GitHub Actions 在 macOS 上编译成未签名 IPA。
 
@@ -9,10 +9,10 @@
 **下载（免登录直链）**
 
 ```
-https://github.com/klein7syd/gym/releases/download/v4.9.2/REPS-4.9.2-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.9.3/REPS-4.9.3-unsigned.ipa
 ```
 
-Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.2
+Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.3
 
 **签名（Windows 上用 Sideloadly）**
 
@@ -26,7 +26,31 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.2
 
 ---
 
-## 二、4.9.2 这一版做了什么
+## 二、4.9.3 这一版做了什么
+
+### 1. 下拉抖动/闪烁的根因：DragGesture 用了 .local
+手势挂在抓手 / 头部 / 封面 / 标题区上，它们都在**被 `.offset(y: dragOffset)` 移动的卡片内部**。
+`.local` 下手指下移 → 视图跟着下移 → 局部坐标里的 y 被抵消 → `translation.height` 变小 →
+`dragOffset` 变小 → 卡片弹回 → 下一帧 translation 又变大：正反馈回路，持续抖动，`pull` 同步跳。
+改成 `DragGesture(minimumDistance: 8, coordinateSpace: .global)`。
+
+### 2. 拖动期间不切窗口配色
+`beginDismiss()` / `cancelDismiss()` 删除（整窗口 userInterfaceStyle 中途变化 = 全窗口重绘）。
+拖动全程 `forceDark = true`；弹回什么都不做；关闭改为**先动画**，`asyncAfter(0.30)` 后
+复查 `!isOpen` 再无动画切回浅色。
+
+### 3. 封面去掉 `.animation(.easeOut(0.25), value: side)`
+side 变化时封面相对卡片滞后 0.25s，出现错位撕裂帧。不再用别的动画替代。
+
+### 4. 压暗遮罩抽成 `DimOverlay`
+数值 0.42 与 spring(0.46/0.90) 不变；scaleEffect 与 CardClip 半径仍留在 RootTabView。
+
+### 已知
+RootTabView body 仍读 `pull`，拖动时依旧每帧求值；彻底方案（整层抽 CardStack）未做。
+
+---
+
+## 二·旧：4.9.2 这一版做了什么
 
 ### 1. 下拉 / 关闭时的深浅色闪烁
 原则：窗口配色只能在播放页仍盖满屏（位移≈0）时切换。

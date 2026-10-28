@@ -1,313 +1,3 @@
-===== ios/REPS/PlayerChrome.swift | Target：REPS | 状态：修改 =====
-import SwiftUI
-import UIKit
-
-// MARK: - 安全区
-//
-// 播放页要铺满整屏（含状态栏 / 底部横条区域），所以它自己忽略安全区，
-// 再按真实安全区把内容往里让 —— 否则 `.clipShape` 会按安全区内的 frame 裁剪，
-// 上下各留一条黑边（4.7 的「重大 Bug」就是这么来的）。
-
-enum SafeArea {
-    /// 取不到窗口时的回退值：按灵动岛机型（top 59 / bottom 34）。
-    /// 绝不能用 0 —— 0 会让播放页内容顶到状态栏和底部横条下面。
-    private static let fallback = UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0)
-
-    static var insets: UIEdgeInsets {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        // 优先前台活跃的场景，没有再退回任意一个
-        let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
-        let win = scene?.windows.first(where: { $0.isKeyWindow }) ?? scene?.windows.first
-        // 首帧可能还没布局：top == 0 视为「拿不到」，回退到灵动岛基准值
-        guard let insets = win?.safeAreaInsets, insets.top > 0 else { return fallback }
-        return insets
-    }
-}
-
-// MARK: - 播放页的呈现方式
-//
-// 以前用 fullScreenCover：那一层是完全独立的窗口层，往下拖时下面什么都没有，
-// 露出来就是大片黑色。改成在根视图里叠一张自己管理的卡片：
-// 打开时底下的 TabView 稍微缩小并压暗，播放页从底部推上来，
-// 往下拖的时候底下的菜单一直看得见 —— 就是 iOS 那种「回到上一级」的观感。
-
-final class PlayerPresenter: ObservableObject {
-    static let shared = PlayerPresenter()
-    @Published var isOpen = false
-    /// 下拉进度：0 = 完全打开，1 = 已经拉到底（松手就关）。
-    /// 下层菜单靠它跟着渐进放大 / 变亮 / 变圆角，而不是等关闭动画才动一下。
-    @Published var pull: CGFloat = 0
-    /// 播放页开着时把整个 App 切到深色（状态栏文字才会转白）。
-    /// 不能随手写 `.preferredColorScheme(.dark)`：那会在播放页还在滑入、菜单露在外面的
-    /// 那 0.4 秒里把整个窗口换成深色，看起来就是一整块颜色闪一下。
-    /// 所以改成「完全盖住之后再切、开始下滑之前就切回来」——两次切换都发生在被遮住的时候。
-    @Published var forceDark = false
-
-    private init() {}
-
-    func open() {
-        guard !isOpen else { return }
-        pull = 0
-        withAnimation(.spring(response: 0.46, dampingFraction: 0.90)) {
-            isOpen = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.52) { [weak self] in
-            // 0.52s 内用户已经把它关掉了：不要再把窗口切成深色，
-            // 否则下一次打开会在「已经盖满」之前就变成深色，露出来那一下就是闪。
-            guard let self = self, self.isOpen else { return }
-            self.forceDark = true
-        }
-    }
-
-    /// 往下拖的**第一帧**：这时位移只有 8pt 左右，底下几乎还没露出来，
-    /// 在这里把窗口切回浅色谁也看不见；再晚一点（比如松手时才切），
-    /// 底下已经露出的那整页会当场由深变浅 —— 那就是「下拉时闪一下」的来源。
-    /// 用关掉动画的 Transaction：preferredColorScheme 的变化一旦被动画带，
-    /// 会变成一段 0.4s 的渐变，和手势叠在一起看更花。
-    func beginDismiss() {
-        guard forceDark else { return }
-        var t = Transaction()
-        t.disablesAnimations = true
-        withTransaction(t) { forceDark = false }
-    }
-
-    /// 没拖够、弹回原位：等弹回动画（response 0.34）走完再把窗口切回深色。
-    /// 回调里必须复查状态 —— 这 0.36s 内用户可能又把它关掉了，或者又开始拖了。
-    func cancelDismiss() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) { [weak self] in
-            guard let self = self, self.isOpen, self.pull == 0 else { return }
-            self.forceDark = true
-        }
-    }
-
-    func close() {
-        guard isOpen else { return }
-        pull = 0
-        // 先把窗口切回浅色。此刻播放页还盖满全屏，切了看不见；
-        // 用 disablesAnimations 的 Transaction，理由同 beginDismiss。
-        let needFlip = forceDark
-        if needFlip {
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) { forceDark = false }
-            // 让配色切换先单独渲染一帧（这一帧播放页仍盖满屏），0.05s 后再下滑
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.startDismissAnimation()
-            }
-        } else {
-            // 拖动开始时已经切过浅色了，不用再等
-            startDismissAnimation()
-        }
-    }
-
-    private func startDismissAnimation() {
-        withAnimation(.spring(response: 0.40, dampingFraction: 0.92)) {
-            isOpen = false
-        }
-    }
-}
-
-// MARK: - 训练面板
-//
-// 从播放页的训练卡点进来。内容就是训练页那套（同一个 Store / RestTimer），
-// 只是排得更紧凑，边听歌边记组不用跳回训练页。
-
-struct TrainingSheet: View {
-    @ObservedObject var store = Store.shared
-    @ObservedObject var rest = RestTimer.shared
-    @Environment(\.dismiss) private var dismiss
-    @State private var detent: PresentationDetent = .large
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    exerciseCard
-
-                    if rest.isRunning { restCard }
-
-                    HStack(spacing: 12) {
-                        StepperField(label: "重量", unit: "kg",
-                                     value: formatWeight(store.lastWeight),
-                                     onMinus: { store.setWeight(store.lastWeight - 2.5) },
-                                     onPlus: { store.setWeight(store.lastWeight + 2.5) })
-                        StepperField(label: "次数", unit: "reps",
-                                     value: "\(store.lastReps)",
-                                     onMinus: { store.setReps(store.lastReps - 1) },
-                                     onPlus: { store.setReps(store.lastReps + 1) })
-                    }
-
-                    Button {
-                        completeSet()
-                    } label: {
-                        Text("完成一组")
-                    }
-                    .buttonStyle(GlassButtonStyle(prominent: true))
-
-                    setListCard
-
-                    if store.current != nil {
-                        Button(role: .destructive) {
-                            rest.skip()
-                            store.finishSession()
-                            dismiss()
-                        } label: {
-                            Text("结束本次训练")
-                                .font(.system(size: 14, weight: .medium))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundColor(.red)
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 26)
-            }
-            .background { AppBackground() }
-            .scrollDismissesKeyboard(.immediately)
-            .navigationTitle("训练")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("完成") { dismiss() }
-                        .fontWeight(.semibold)
-                }
-            }
-            .onAppear { store.ensureSession() }
-        }
-        .presentationDetents([.medium, .large], selection: $detent)
-        .presentationDragIndicator(.visible)
-    }
-
-    // MARK: 当前动作
-
-    private var exerciseCard: some View {
-        let ex = store.currentExercise
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("当前动作")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.secondary)
-            Text(ex.name)
-                .font(.system(size: 20, weight: .bold))
-                .lineSpacing(2)
-                .lineLimit(1)
-            HStack(spacing: 6) {
-                Text("已做 \(ex.sets.count) 组")
-                    .font(.system(size: 12))
-                    .lineSpacing(2)
-                    .foregroundColor(.secondary)
-                if let s = ex.sets.last {
-                    Text("· 上一组 \(formatWeight(s.w)) kg × \(s.r)")
-                        .font(.system(size: 12))
-                        .lineSpacing(2)
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .glass(cornerRadius: 20, shadow: false)
-    }
-
-    // MARK: 休息
-
-    private var restCard: some View {
-        HStack(spacing: 14) {
-            MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 58)
-            VStack(alignment: .leading, spacing: 5) {
-                Text("组间休息")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("结束后会自动提示")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-            Spacer(minLength: 4)
-            Button {
-                rest.add(seconds: 30)
-            } label: {
-                Text("+30")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 48, height: 32)
-                    .background(Capsule().fill(Color.primary.opacity(0.08)))
-            }
-            .buttonStyle(ScaleButtonStyle())
-            Button {
-                rest.skip()
-            } label: {
-                Text("跳过")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.secondary)
-                    .frame(width: 44, height: 32)
-            }
-            .buttonStyle(ScaleButtonStyle())
-        }
-        .padding(16)
-        .glass(cornerRadius: 20, shadow: false)
-    }
-
-    // MARK: 组列表
-
-    private var setListCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("本次记录")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
-
-            let sets = store.currentExercise.sets
-            if sets.isEmpty {
-                Text("还没有记录，调好重量和次数点「完成一组」")
-                    .font(.system(size: 12))
-                    .lineSpacing(3)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 6)
-            } else {
-                ForEach(Array(sets.enumerated()), id: \.element.id) { i, s in
-                    HStack(spacing: 10) {
-                        Text("\(i + 1)")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundColor(.secondary)
-                            .frame(width: 18, alignment: .trailing)
-                        Text("\(formatWeight(s.w)) kg")
-                            .font(.system(size: 14, weight: .medium, design: .rounded))
-                        Text("× \(s.r)")
-                            .font(.system(size: 13, design: .rounded))
-                            .foregroundColor(.secondary)
-                        Spacer(minLength: 4)
-                        Button {
-                            store.deleteSet(s.id)
-                        } label: {
-                            Image(systemName: "minus.circle")
-                                .font(.system(size: 15))
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.vertical, 6)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .glass(cornerRadius: 20, shadow: false)
-    }
-
-    private func completeSet() {
-        _ = store.ensureSession()
-        store.logSet(weight: store.lastWeight, reps: store.lastReps)
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        rest.start(seconds: store.restSeconds)
-    }
-
-    private func formatWeight(_ w: Double) -> String {
-        w.truncatingRemainder(dividingBy: 1) == 0
-            ? String(format: "%.0f", w)
-            : String(format: "%.1f", w)
-    }
-}
-
 ===== ios/REPS/MusicView.swift | Target：REPS | 状态：修改 =====
 import SwiftUI
 import MediaPlayer
@@ -1170,8 +860,6 @@ struct NowPlayingView: View {
     @ObservedObject var player = PlayerPresenter.shared
 
     @State private var dragOffset: CGFloat = 0
-    /// 这一轮下拉有没有已经通知过「开始关闭」（只在第一次 onChanged 里发一次）
-    @State private var dismissing = false
     @State private var showQueue = false
     @State private var showTraining = false
     /// 拖动进度条时的临时秒数（nil = 没在拖，跟随播放器）
@@ -1361,33 +1049,34 @@ struct NowPlayingView: View {
 
     /// 往下拖收回：底下的菜单一直可见（并被一起带着放大 / 变亮），所以不会出现黑边；
     /// 拖过阈值就关，没拖够就弹回原位。
+    ///
+    /// ★ 坐标空间必须是 `.global`，这是 4.9.3 修「下拉时持续抖动 / 闪烁」的关键：
+    /// 这个手势挂在抓手 / 头部 / 封面 / 标题区上，而这几个视图都在**被 `.offset(y: dragOffset)`
+    /// 移动的卡片内部**。用默认的 `.local`（视图自身坐标）时，手指往下一动 → 视图跟着往下移 →
+    /// 手指在这个局部坐标里的 y 被抵消 → `translation.height` 变小 → `dragOffset` 变小 →
+    /// 卡片弹回去 → 下一帧 translation 又变大 …… 形成一个正反馈回路，表现为持续抖动，
+    /// 而且 `player.pull` 也跟着来回跳，底下 TabView 的缩放 / 压暗 / 圆角同步抖。
+    /// `.global` 不随卡片位移变化，拿到的才是手指的真实位移，dragOffset 单调跟随。
     private var dismissDrag: some Gesture {
-        DragGesture(minimumDistance: 8)
+        DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { v in
                 let h = max(0, v.translation.height)
                 dragOffset = h
                 // 0…1：拉到 260pt 就算到底，下层同步动
                 player.pull = min(1, h / 260)
-                // 刚拖起来（位移还只有 8pt 左右、底下几乎没露出）就把窗口切回浅色。
-                // 这一步不能等到松手：拖到一半时底下那整页已经露出来了，
-                // 那时再从深变浅，就是肉眼看到的「下拉闪一下」。
-                if h > 0 && !dismissing {
-                    dismissing = true
-                    player.beginDismiss()
-                }
+                // 拖动期间不动窗口配色（4.9.2 在这里切过，会触发全窗口重绘，也是闪烁来源）。
+                // 现在 forceDark 一直保持 true，直到 close() 里播放页快滑出去时才切。
             }
             .onEnded { v in
-                dismissing = false
                 let far = v.translation.height > 110 || v.predictedEndTranslation.height > 260
                 if far {
                     player.close()
                 } else {
+                    // 弹回：纯位置回弹，配色全程不变（forceDark 一直是 true），不会有闪
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
                         dragOffset = 0
                         player.pull = 0
                     }
-                    // 弹回原位后再把窗口切回深色（0.36s 后，弹回动画 0.34s）
-                    player.cancelDismiss()
                 }
             }
     }
@@ -1395,12 +1084,15 @@ struct NowPlayingView: View {
     // MARK: 封面
 
     private func cover(side: CGFloat) -> some View {
+        // 封面尺寸直接跟 side 走，**不加任何隐式动画**。
+        // 以前这里挂过 .animation(.easeOut(duration: 0.25), value: side)：side 在拖动
+        // （安全区回退 / 布局重算）时会变，这个动画让封面相对卡片滞后 0.25s，
+        // 拖动过程中就会出现「封面和卡片错位」的撕裂帧。
         TrackArt(title: hub.current?.title ?? "REPS",
                  mediaID: hub.current?.mediaID,
                  size: side,
                  corner: 8)
             .shadow(color: .black.opacity(0.30), radius: 24, y: 16)
-            .animation(.easeOut(duration: 0.25), value: side)
             .gesture(dismissDrag)
     }
 
@@ -1915,6 +1607,301 @@ struct AlbumArt: View {
     }
 }
 
+===== ios/REPS/PlayerChrome.swift | Target：REPS | 状态：修改 =====
+import SwiftUI
+import UIKit
+
+// MARK: - 安全区
+//
+// 播放页要铺满整屏（含状态栏 / 底部横条区域），所以它自己忽略安全区，
+// 再按真实安全区把内容往里让 —— 否则 `.clipShape` 会按安全区内的 frame 裁剪，
+// 上下各留一条黑边（4.7 的「重大 Bug」就是这么来的）。
+
+enum SafeArea {
+    /// 取不到窗口时的回退值：按灵动岛机型（top 59 / bottom 34）。
+    /// 绝不能用 0 —— 0 会让播放页内容顶到状态栏和底部横条下面。
+    private static let fallback = UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0)
+
+    static var insets: UIEdgeInsets {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        // 优先前台活跃的场景，没有再退回任意一个
+        let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
+        let win = scene?.windows.first(where: { $0.isKeyWindow }) ?? scene?.windows.first
+        // 首帧可能还没布局：top == 0 视为「拿不到」，回退到灵动岛基准值
+        guard let insets = win?.safeAreaInsets, insets.top > 0 else { return fallback }
+        return insets
+    }
+}
+
+// MARK: - 播放页的呈现方式
+//
+// 以前用 fullScreenCover：那一层是完全独立的窗口层，往下拖时下面什么都没有，
+// 露出来就是大片黑色。改成在根视图里叠一张自己管理的卡片：
+// 打开时底下的 TabView 稍微缩小并压暗，播放页从底部推上来，
+// 往下拖的时候底下的菜单一直看得见 —— 就是 iOS 那种「回到上一级」的观感。
+
+final class PlayerPresenter: ObservableObject {
+    static let shared = PlayerPresenter()
+    @Published var isOpen = false
+    /// 下拉进度：0 = 完全打开，1 = 已经拉到底（松手就关）。
+    /// 下层菜单靠它跟着渐进放大 / 变亮 / 变圆角，而不是等关闭动画才动一下。
+    @Published var pull: CGFloat = 0
+    /// 播放页开着时把整个 App 切到深色（状态栏文字才会转白）。
+    /// 不能随手写 `.preferredColorScheme(.dark)`：那会在播放页还在滑入、菜单露在外面的
+    /// 那 0.4 秒里把整个窗口换成深色，看起来就是一整块颜色闪一下。
+    /// 所以改成「完全盖住之后再切、开始下滑之前就切回来」——两次切换都发生在被遮住的时候。
+    @Published var forceDark = false
+
+    private init() {}
+
+    func open() {
+        guard !isOpen else { return }
+        pull = 0
+        withAnimation(.spring(response: 0.46, dampingFraction: 0.90)) {
+            isOpen = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.52) { [weak self] in
+            // 0.52s 内用户已经把它关掉了：不要再把窗口切成深色，
+            // 否则下一次打开会在「已经盖满」之前就变成深色，露出来那一下就是闪。
+            guard let self = self, self.isOpen else { return }
+            self.forceDark = true
+        }
+    }
+
+    // 4.9.2 曾在这里放过 `beginDismiss()` / `cancelDismiss()`：拖动第一帧就把窗口切回浅色，
+    // 弹回时再延迟切回深色。4.9.3 删掉了这两个方法 —— 拖动途中改整个窗口的 userInterfaceStyle
+    // 会触发全窗口重绘，叠加拖动每帧刷新，本身就是一处肉眼可见的闪烁。
+    // 现在拖动全程保持 forceDark = true（底下露出的 TabView 是深色版，但播放页和压暗层
+    // 本来就是深色，视觉上是连续的），只在下面 close() 里、播放页快滑出去时才切回浅色。
+
+    func close() {
+        guard isOpen else { return }
+        pull = 0
+        // 先把播放页往下滑；等它基本滑出屏幕、底层 TabView 也快回到 scale 1 之后，
+        // 再切回浅色 —— 那时切几乎看不见。
+        // 顺序是「先动画，0.30s 后再切色」，和 4.9.2 的「先切色，0.05s 后再动画」正好相反：
+        // 4.9.2 那套在拖动关闭时颜色切换发生在卡片刚被拉下、底下露出很多的时刻，会跳一下。
+        startDismissAnimation()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [weak self] in
+            guard let self = self else { return }
+            // 复查状态：这 0.30s 内用户可能又点开了（isOpen 又变 true），
+            // 那就不能再把窗口切成浅色，否则状态栏会在深色播放页上变成黑字。
+            guard !self.isOpen else { return }
+            guard self.forceDark else { return }
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { self.forceDark = false }
+        }
+    }
+
+    private func startDismissAnimation() {
+        withAnimation(.spring(response: 0.40, dampingFraction: 0.92)) {
+            isOpen = false
+        }
+    }
+}
+
+// MARK: - 训练面板
+//
+// 从播放页的训练卡点进来。内容就是训练页那套（同一个 Store / RestTimer），
+// 只是排得更紧凑，边听歌边记组不用跳回训练页。
+
+struct TrainingSheet: View {
+    @ObservedObject var store = Store.shared
+    @ObservedObject var rest = RestTimer.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var detent: PresentationDetent = .large
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    exerciseCard
+
+                    if rest.isRunning { restCard }
+
+                    HStack(spacing: 12) {
+                        StepperField(label: "重量", unit: "kg",
+                                     value: formatWeight(store.lastWeight),
+                                     onMinus: { store.setWeight(store.lastWeight - 2.5) },
+                                     onPlus: { store.setWeight(store.lastWeight + 2.5) })
+                        StepperField(label: "次数", unit: "reps",
+                                     value: "\(store.lastReps)",
+                                     onMinus: { store.setReps(store.lastReps - 1) },
+                                     onPlus: { store.setReps(store.lastReps + 1) })
+                    }
+
+                    Button {
+                        completeSet()
+                    } label: {
+                        Text("完成一组")
+                    }
+                    .buttonStyle(GlassButtonStyle(prominent: true))
+
+                    setListCard
+
+                    if store.current != nil {
+                        Button(role: .destructive) {
+                            rest.skip()
+                            store.finishSession()
+                            dismiss()
+                        } label: {
+                            Text("结束本次训练")
+                                .font(.system(size: 14, weight: .medium))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.red)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 26)
+            }
+            .background { AppBackground() }
+            .scrollDismissesKeyboard(.immediately)
+            .navigationTitle("训练")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("完成") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+            .onAppear { store.ensureSession() }
+        }
+        .presentationDetents([.medium, .large], selection: $detent)
+        .presentationDragIndicator(.visible)
+    }
+
+    // MARK: 当前动作
+
+    private var exerciseCard: some View {
+        let ex = store.currentExercise
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("当前动作")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+            Text(ex.name)
+                .font(.system(size: 20, weight: .bold))
+                .lineSpacing(2)
+                .lineLimit(1)
+            HStack(spacing: 6) {
+                Text("已做 \(ex.sets.count) 组")
+                    .font(.system(size: 12))
+                    .lineSpacing(2)
+                    .foregroundColor(.secondary)
+                if let s = ex.sets.last {
+                    Text("· 上一组 \(formatWeight(s.w)) kg × \(s.r)")
+                        .font(.system(size: 12))
+                        .lineSpacing(2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .glass(cornerRadius: 20, shadow: false)
+    }
+
+    // MARK: 休息
+
+    private var restCard: some View {
+        HStack(spacing: 14) {
+            MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 58)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("组间休息")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("结束后会自动提示")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            Spacer(minLength: 4)
+            Button {
+                rest.add(seconds: 30)
+            } label: {
+                Text("+30")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 48, height: 32)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+            }
+            .buttonStyle(ScaleButtonStyle())
+            Button {
+                rest.skip()
+            } label: {
+                Text("跳过")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .frame(width: 44, height: 32)
+            }
+            .buttonStyle(ScaleButtonStyle())
+        }
+        .padding(16)
+        .glass(cornerRadius: 20, shadow: false)
+    }
+
+    // MARK: 组列表
+
+    private var setListCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("本次记录")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            let sets = store.currentExercise.sets
+            if sets.isEmpty {
+                Text("还没有记录，调好重量和次数点「完成一组」")
+                    .font(.system(size: 12))
+                    .lineSpacing(3)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+            } else {
+                ForEach(Array(sets.enumerated()), id: \.element.id) { i, s in
+                    HStack(spacing: 10) {
+                        Text("\(i + 1)")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundColor(.secondary)
+                            .frame(width: 18, alignment: .trailing)
+                        Text("\(formatWeight(s.w)) kg")
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                        Text("× \(s.r)")
+                            .font(.system(size: 13, design: .rounded))
+                            .foregroundColor(.secondary)
+                        Spacer(minLength: 4)
+                        Button {
+                            store.deleteSet(s.id)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                                .font(.system(size: 15))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .glass(cornerRadius: 20, shadow: false)
+    }
+
+    private func completeSet() {
+        _ = store.ensureSession()
+        store.logSet(weight: store.lastWeight, reps: store.lastReps)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        rest.start(seconds: store.restSeconds)
+    }
+
+    private func formatWeight(_ w: Double) -> String {
+        w.truncatingRemainder(dividingBy: 1) == 0
+            ? String(format: "%.0f", w)
+            : String(format: "%.1f", w)
+    }
+}
+
 ===== ios/REPS/REPSApp.swift | Target：REPS | 状态：修改 =====
 import SwiftUI
 import UserNotifications
@@ -1994,10 +1981,9 @@ struct RootTabView: View {
             // 跟着下拉进度实时变化：拉得越多，下层越接近原始大小、越亮 —— 就是「渐渐回到上一级」
             .scaleEffect(player.isOpen ? 0.94 + 0.06 * player.pull : 1, anchor: .center)
             .overlay {
-                Color.black
-                    .opacity(player.isOpen ? 0.42 * (1 - Double(player.pull)) : 0)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
+                // 压暗遮罩抽成了独立小视图，见文件底部的 DimOverlay：
+                // pull 每帧都在变，遮罩只依赖 pull，没必要让根视图重新构造它。
+                DimOverlay()
             }
             .allowsHitTesting(!player.isOpen)
             .animation(.spring(response: 0.46, dampingFraction: 0.90), value: player.isOpen)
@@ -2026,470 +2012,28 @@ struct RootTabView: View {
 // `CardClip`（只在播放页打开时才给 TabView 裁圆角）定义在 Theme.swift，
 // 播放页 NowPlayingView 用的是同一个修饰符。
 
-===== ios/REPS/TrainView.swift | Target：REPS | 状态：修改 =====
-import SwiftUI
-
-struct TrainView: View {
-    @ObservedObject var store = Store.shared
-    @ObservedObject var rest = RestTimer.shared
-
-    @State private var showPicker = false
-    @State private var showFinishAlert = false
-    @State private var showDiscardAlert = false
-
-    private let restOptions = [60, 90, 120, 180]
+// MARK: - 压暗遮罩
+//
+// 单独抽成一个只观察 player 的小视图：`pull` 是 @Published，拖动时每帧都在变，
+// 遮罩只跟 pull 有关（0.42 → 0），没必要每次都让根视图重新构造这一段。
+// 数值完全不改：0.42 * (1 - pull)。
+//
+// 注意它仍然挂在 TabView 的 `.overlay` 上；打开 / 关闭播放页时这层压暗的渐变
+// 用与外层同一条 spring（0.46 / 0.90），所以视觉和抽取之前完全一样。
+private struct DimOverlay: View {
+    @ObservedObject var player = PlayerPresenter.shared
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    exerciseCard
-
-                    if rest.isRunning {
-                        restCard
-                    }
-
-                    HStack(spacing: 12) {
-                        StepperField(label: "重量", unit: "kg",
-                                     value: formatWeight(store.lastWeight),
-                                     onMinus: { store.setWeight(store.lastWeight - 2.5) },
-                                     onPlus: { store.setWeight(store.lastWeight + 2.5) })
-                        StepperField(label: "次数", unit: "reps",
-                                     value: "\(store.lastReps)",
-                                     onMinus: { store.setReps(store.lastReps - 1) },
-                                     onPlus: { store.setReps(store.lastReps + 1) })
-                    }
-
-                    Button(action: completeSet) {
-                        Text("完成一组")
-                    }
-                    .buttonStyle(GlassButtonStyle(prominent: true))
-
-                    setListCard
-
-                    sessionFooter
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 28)
-            }
-            .background { AppBackground() }
-            .navigationTitle("训练")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showPicker = true
-                    } label: {
-                        Image(systemName: "list.bullet")
-                    }
-                }
-            }
-            .sheet(isPresented: $showPicker) {
-                ExercisePickerView()
-            }
-            .onAppear {
-                store.ensureSession()
-            }
-        }
-    }
-
-    // MARK: - 当前动作
-
-    private var exerciseCard: some View {
-        let ex = store.currentExercise
-        let last = store.lastSession(of: ex.name)
-        return SectionCard {
-            Button {
-                showPicker = true
-            } label: {
-                HStack {
-                    VStack(alignment: .leading, spacing: 9) {
-                        Text("当前动作")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text(ex.name)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .lineSpacing(2)
-                            .foregroundColor(.primary)
-                        if let last = last {
-                            Text("上次 \(last.sets.count) 组 · 最重 \(formatWeight(last.maxWeight)) kg · 1RM \(String(format: "%.1f", last.bestE1RM)) kg")
-                                .font(.caption)
-                                .lineSpacing(2)
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else {
-                            Text("还没记录过，先找能标准做 8-12 次的重量")
-                                .font(.caption)
-                                .lineSpacing(2)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-
-            if (store.current?.exercises.count ?? 0) > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(Array((store.current?.exercises ?? []).enumerated()), id: \.element.id) { i, e in
-                            Button {
-                                store.switchExercise(index: i)
-                            } label: {
-                                Text(e.name)
-                                    .font(.caption)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 7)
-                                    .background(i == (store.current?.index ?? 0)
-                                                ? Color.accentColor.opacity(0.18)
-                                                : Color(UIColor.tertiarySystemFill))
-                                    .foregroundColor(i == (store.current?.index ?? 0) ? .accentColor : .secondary)
-                                    .cornerRadius(20)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - 休息
-
-    private var restCard: some View {
-        SectionCard {
-            HStack(spacing: 16) {
-                RestRing(progress: rest.progress, text: rest.remainingText)
-                    .scaleEffect(0.62)
-                    .frame(width: 118, height: 118)
-
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 6) {
-                        ForEach(restOptions, id: \.self) { s in
-                            Button {
-                                rest.start(seconds: s)
-                                store.restSeconds = s
-                            } label: {
-                                Text("\(s)")
-                                    .font(.system(size: 12, weight: s == rest.total ? .semibold : .regular))
-                                    .foregroundColor(s == rest.total ? .white : .secondary)
-                                    .frame(width: 38, height: 28)
-                                    .background(
-                                        Capsule().fill(s == rest.total
-                                                       ? Color.accentColor
-                                                       : Color.primary.opacity(0.06))
-                                    )
-                            }
-                            .buttonStyle(ScaleButtonStyle())
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        Button {
-                            rest.add(seconds: 30)
-                        } label: {
-                            Text("+30 秒")
-                                .font(.system(size: 12, weight: .medium))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(Capsule().fill(Color.primary.opacity(0.06)))
-                        }
-                        .buttonStyle(ScaleButtonStyle())
-
-                        Button {
-                            rest.skip()
-                        } label: {
-                            Text("跳过")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 7)
-                                .background(Capsule().fill(Color.primary.opacity(0.06)))
-                        }
-                        .buttonStyle(ScaleButtonStyle())
-                    }
-
-                    Text("锁屏后到点由系统通知提醒")
-                        .font(.system(size: 10))
-                        .lineSpacing(2)
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-    }
-
-    // MARK: - 组列表
-
-    private var setListCard: some View {
-        let ex = store.currentExercise
-        return SectionCard(title: "本次已完成 \(ex.sets.count) 组") {
-            if ex.sets.isEmpty {
-                Text("还没有记录。调好重量和次数，做完一组点上面的按钮。")
-                    .font(.subheadline)
-                    .lineSpacing(3)
-                    .foregroundColor(.secondary)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(ex.sets.enumerated()), id: \.element.id) { i, s in
-                        HStack {
-                            Text("\(i + 1)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .frame(width: 22, alignment: .leading)
-                            Text("\(formatWeight(s.w)) kg × \(s.r)")
-                                .font(.system(.body, design: .rounded))
-                                .fontWeight(.medium)
-                            Spacer()
-                            Text("1RM \(String(format: "%.1f", s.e1rm))")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Image(systemName: "checkmark")
-                                .font(.caption)
-                                .foregroundColor(.accentColor)
-                        }
-                        .padding(.vertical, 13)
-                        if i < ex.sets.count - 1 { Divider() }
-                    }
-                }
-                if let last = ex.sets.last {
-                    Button {
-                        store.deleteSet(last.id)
-                    } label: {
-                        Label("撤销上一组", systemImage: "arrow.uturn.backward")
-                            .font(.caption)
-                    }
-                    .padding(.top, 8)
-                }
-            }
-        }
-    }
-
-    // MARK: - 底部操作
-
-    private var sessionFooter: some View {
-        VStack(spacing: 10) {
-            Button {
-                showFinishAlert = true
-            } label: {
-                Text("结束训练并保存")
-            }
-            .buttonStyle(GlassButtonStyle())
-
-            if store.current != nil {
-                Button(role: .destructive) {
-                    showDiscardAlert = true
-                } label: {
-                    Text("放弃本次训练")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .alert("结束本次训练？", isPresented: $showFinishAlert) {
-            Button("保存", role: .none) {
-                rest.skip()
-                store.finishSession()
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("已完成的组会写入历史，用于成长页统计。")
-        }
-        .alert("放弃本次训练？", isPresented: $showDiscardAlert) {
-            Button("放弃", role: .destructive) {
-                rest.skip()
-                store.discardSession()
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("本次记录的所有组都会被删除，不可恢复。")
-        }
-    }
-
-    // MARK: - 动作
-
-    private func completeSet() {
-        _ = store.ensureSession()
-        store.logSet(weight: store.lastWeight, reps: store.lastReps)
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        rest.start(seconds: store.restSeconds)
-    }
-
-    private func formatWeight(_ w: Double) -> String {
-        w.truncatingRemainder(dividingBy: 1) == 0 ? String(format: "%.0f", w) : String(format: "%.2f", w)
-    }
-}
-
-// MARK: - 动作选择
-
-struct ExercisePickerView: View {
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject var store = Store.shared
-
-    @State private var search = ""
-    @State private var group: String? = nil
-    @State private var detail: Move?
-    @State private var customName = ""
-
-    private var filtered: [Move] {
-        store.library.moves.filter { m in
-            let matchGroup = group == nil || m.g == group
-            let q = search.trimmingCharacters(in: .whitespaces)
-            let matchSearch = q.isEmpty
-                || m.n.localizedCaseInsensitiveContains(q)
-                || (m.en ?? "").localizedCaseInsensitiveContains(q)
-                || (m.mus ?? "").localizedCaseInsensitiveContains(q)
-                || (m.eq ?? "").localizedCaseInsensitiveContains(q)
-            return matchGroup && matchSearch
-        }
-    }
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            filterChip(title: "全部", selected: group == nil) { group = nil }
-                            ForEach(store.library.groups, id: \.self) { g in
-                                filterChip(title: g, selected: group == g) { group = g }
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-
-                Section(header: Text("自定义动作")) {
-                    HStack {
-                        TextField("不在列表里？输入名字", text: $customName)
-                        Button("添加") {
-                            let n = customName.trimmingCharacters(in: .whitespaces)
-                            guard !n.isEmpty else { return }
-                            store.addExercise(name: n)
-                            customName = ""
-                            dismiss()
-                        }
-                        .disabled(customName.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                }
-
-                Section(header: Text("共 \(filtered.count) 个动作")) {
-                    ForEach(filtered) { m in
-                        HStack {
-                            Button {
-                                store.addExercise(name: m.n)
-                                dismiss()
-                            } label: {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(m.n).foregroundColor(.primary)
-                                    Text("\(m.g) · \(m.eq ?? "-") · \(m.p ?? "-")")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            Spacer()
-                            Button {
-                                detail = m
-                            } label: {
-                                Image(systemName: "info.circle")
-                                    .foregroundColor(.accentColor)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-            .listStyle(.insetGrouped)
-            .searchable(text: $search, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索动作 / 肌肉 / 器械")
-            .navigationTitle("选择动作")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("完成") { dismiss() }
-                }
-            }
-            .sheet(item: $detail) { m in
-                MoveDetailView(move: m)
-            }
-        }
-    }
-
-    private func filterChip(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.subheadline)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(selected ? Color.accentColor : Color(UIColor.tertiarySystemFill))
-                .foregroundColor(selected ? .white : .primary)
-                .cornerRadius(18)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - 动作详情
-
-struct MoveDetailView: View {
-    let move: Move
-    @Environment(\.dismiss) private var dismiss
-    @ObservedObject var store = Store.shared
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(move.n).font(.title2).fontWeight(.bold)
-                        if let en = move.en {
-                            Text(en).font(.subheadline).foregroundColor(.secondary)
-                        }
-                        Text("\(move.g) · \(move.eq ?? "-") · \(move.p ?? "-")")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        if let mus = move.mus {
-                            Text(mus).font(.subheadline)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                if let cue = move.cue, !cue.isEmpty {
-                    Section(header: Text("动作要领")) {
-                        ForEach(cue, id: \.self) { Text($0).font(.subheadline) }
-                    }
-                }
-                if let err = move.err, !err.isEmpty {
-                    Section(header: Text("常见错误")) {
-                        ForEach(err, id: \.self) {
-                            Label($0, systemImage: "exclamationmark.triangle")
-                                .font(.subheadline)
-                                .foregroundColor(.orange)
-                        }
-                    }
-                }
-                if let alt = move.alt, !alt.isEmpty {
-                    Section(header: Text("替代动作")) {
-                        ForEach(alt, id: \.self) { Text($0).font(.subheadline) }
-                    }
-                }
-            }
-            .navigationTitle("动作详情")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("关闭") { dismiss() }
-                }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("开始练") {
-                        store.addExercise(name: move.n)
-                        dismiss()
-                    }
-                }
-            }
-        }
+        Color.black
+            .opacity(player.isOpen ? 0.42 * (1 - Double(player.pull)) : 0)
+            // 和外层那圈完全同一条 spring（0.46 / 0.90），只是在这里再写一遍：
+            // 这层现在是通过自己的订阅收到 isOpen 变化的，不保证一定落在
+            // RootTabView 那圈 `.animation(…, value: player.isOpen)` 的事务里，
+            // 少了它就可能变成硬切。参数一模一样，视觉上没有任何差别。
+            // 注意 value 只看 isOpen —— 拖动时 opacity 跟 pull 逐帧变化，不能被动画带。
+            .animation(.spring(response: 0.46, dampingFraction: 0.90), value: player.isOpen)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
     }
 }
 
@@ -2532,8 +2076,8 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
-        MARKETING_VERSION: "4.9.2"
-        CURRENT_PROJECT_VERSION: "12"
+        MARKETING_VERSION: "4.9.3"
+        CURRENT_PROJECT_VERSION: "13"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: ""
