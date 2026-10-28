@@ -82,6 +82,34 @@ struct AppBackground: View {
     }
 }
 
+// MARK: - 卡片圆角裁剪（只在需要时才裁）
+
+/// 圆角裁剪必须「按需」：不裁的时候绝不能被裁。
+///
+/// 踩过的坑（4.6 → 4.8 一直存在的「上下大黑边」）：
+/// SwiftUI 里凡是不 ignore 安全区的容器（TabView、NavigationStack 底下的页面、
+/// GeometryReader 也是这样）都是**按安全区布局**的。里面再放一个 `.ignoresSafeArea()`
+/// 的背景，背景是能画到状态栏和底部横条上的；可一旦在这条链路上套
+/// `.clipShape(RoundedRectangle(cornerRadius: 0))`，裁剪边就是**安全区矩形**，
+/// 连圆角为 0 都会硬切一刀，把铺出去的那部分削平 —— 露出来就是底下那层黑，
+/// 表现为「一进 App 上下两条大黑边」「播放页上下两条大黑边」。
+///
+/// 所以：圆角为 0（也就是不需要圆角）的时候，这个修饰符什么都不做。
+struct CardClip: ViewModifier {
+    /// false 时完全不裁；true 时按 `radius` 裁圆角
+    var active: Bool
+    var radius: CGFloat
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if active && radius > 0.01 {
+            content.clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        } else {
+            content
+        }
+    }
+}
+
 /// 按下去轻微缩小，抬起回弹
 struct ScaleButtonStyle: ButtonStyle {
     var scale: CGFloat = 0.96

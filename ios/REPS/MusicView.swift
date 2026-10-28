@@ -915,8 +915,10 @@ struct NowPlayingView: View {
         .ignoresSafeArea()
         .background { playerBackground }
         .offset(y: max(0, dragOffset))
-        // 拉动时圆角随之长大，和底下的卡片形成层次
-        .clipShape(RoundedRectangle(cornerRadius: min(34, dragOffset / 5), style: .continuous))
+        // 拖动时圆角随之长大，和底下的卡片形成层次。
+        // 静止状态（圆角 0）一定不能裁 —— 裁剪边是安全区矩形，会把铺到状态栏 / 底部横条上的
+        // 液态玻璃背景切掉，上下各留一条纯黑，就是「一进播放页上下大黑边」。详见 Theme.swift。
+        .modifier(CardClip(active: dragOffset > 0.5, radius: min(34, dragOffset / 5)))
         .environment(\.colorScheme, .dark)
         .sheet(isPresented: $showQueue) {
             QueueSheet()

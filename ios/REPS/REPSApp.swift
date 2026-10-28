@@ -25,8 +25,17 @@ struct RootTabView: View {
 
     var body: some View {
         ZStack {
-            // 播放页推上来时，底下的菜单缩小、压暗，露出这层底（iOS 卡片堆叠的观感）
-            Color.black.ignoresSafeArea()
+            // 底层：常态用「页面同色」，不是黑色。
+            // TabView 和它里面的页面都是按安全区布局的（系统在根视图里已经替它们让开了
+            // 状态栏与底部横条）。只要这一层是黑的，任何一处没被内容盖住的安全区就会露出黑边，
+            // 所以这里铺的必须是跟页面一样的底色 —— 露出来也看不出来。
+            AppBackground()
+
+            // 播放页打开时这一层换成播放页自己的底色（深灰 #212121），当卡片堆叠的底。
+            // 用播放页同色而不是纯黑：万一播放页边缘有一点没铺到，露出来的也是同一个颜色。
+            Color(white: 0.13)
+                .opacity(player.isOpen ? 1 : 0)
+                .allowsHitTesting(false)
 
             TabView(selection: $selection) {
                 TrainView()
@@ -54,10 +63,15 @@ struct RootTabView: View {
                     .tag(3)
             }
             .tint(.accentColor)
+            // ★ 4.9 修「一进 App 上下两条大黑边」的真正原因：
+            // 以前这里无条件套着 `.clipShape(RoundedRectangle(...))`。TabView 是按安全区
+            // 布局的，一旦套上裁剪，即使圆角是 0，也会沿「安全区矩形」硬切一刀 ——
+            // 页面延伸到状态栏 / 底部横条上的那部分（导航栏底、标签栏底）被切掉，
+            // 露出的就是底下那层，于是上下各留一条边。
+            // 现在只在播放页打开（卡片堆叠、需要圆角）时才裁，静止状态完全不裁。
+            .modifier(CardClip(active: player.isOpen, radius: 34 - 20 * player.pull))
             // 跟着下拉进度实时变化：拉得越多，下层越接近原始大小、越亮 —— 就是「渐渐回到上一级」
             .scaleEffect(player.isOpen ? 0.94 + 0.06 * player.pull : 1, anchor: .center)
-            .clipShape(RoundedRectangle(cornerRadius: player.isOpen ? 34 - 20 * player.pull : 0,
-                                        style: .continuous))
             .overlay {
                 Color.black
                     .opacity(player.isOpen ? 0.42 * (1 - Double(player.pull)) : 0)
@@ -85,3 +99,6 @@ struct RootTabView: View {
         }
     }
 }
+
+// `CardClip`（只在播放页打开时才给 TabView 裁圆角）定义在 Theme.swift，
+// 播放页 NowPlayingView 用的是同一个修饰符。
