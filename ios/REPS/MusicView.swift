@@ -243,6 +243,58 @@ struct MusicView: View {
         ArtworkStore.shared.prefetch(libraryHits, side: 160, limit: 12)
     }
 
+    // MARK: - 搜索结果（按专辑排版）
+    //
+    // 一条专辑一组：左边专辑封面 + 专辑名 + 艺人·曲目数，下面按碟号/音轨号排曲目。
+    // 这样搜「周杰伦」出来的是几张唱片，而不是一大串看不出归属的散歌。
+    // 队列仍然是整串结果（扁平顺序），点组内第几首就从头接着放，不会串。
+
+    private struct AlbumGroup: Identifiable {
+        let id: String
+        let title: String
+        let artist: String
+        let sampleID: MPMediaEntityPersistentID
+        let tracks: [(index: Int, item: MPMediaItem)]
+    }
+
+    private var albumGroups: [AlbumGroup] {
+        var order: [String] = []
+        var buckets: [String: [Int]] = [:]
+        var meta: [String: (title: String, artist: String, sample: MPMediaEntityPersistentID)] = [:]
+
+        for (i, m) in libraryHits.enumerated() {
+            let album = (m.albumTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let artist = (m.albumArtist ?? m.artist ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            // 没有专辑名的歌（散装单曲）统一归到「未知专辑」，否则一首一个标题栏
+            let key = album.isEmpty ? "\u{2205}" : "\(album)|\(artist)"
+            if buckets[key] == nil {
+                order.append(key)
+                buckets[key] = []
+                meta[key] = (album.isEmpty ? "未知专辑" : album, artist, m.persistentID)
+            }
+            buckets[key]?.append(i)
+        }
+
+        return order.compactMap { key in
+            guard let idxs = buckets[key], let info = meta[key] else { return nil }
+            let tracks = idxs.map { (index: $0, item: libraryHits[$0]) }
+                .sorted {
+                    if $0.item.discNumber != $1.item.discNumber {
+                        return $0.item.discNumber < $1.item.discNumber
+                    }
+                    if $0.item.albumTrackNumber != $1.item.albumTrackNumber {
+                        return $0.item.albumTrackNumber < $1.item.albumTrackNumber
+                    }
+                    return $0.index < $1.index
+                }
+            return AlbumGroup(id: key,
+                              title: info.title,
+                              artist: info.artist,
+                              sampleID: info.sample,
+                              tracks: tracks)
+        }
+    }
+
     @ViewBuilder
     private var libraryResults: some View {
         if am.isIndexing {
@@ -263,49 +315,108 @@ struct MusicView: View {
                     .padding(.vertical, 20)
             }
         } else {
+            let groups = albumGroups
             HStack(spacing: 6) {
                 Text("我的资料库 · \(libraryHits.count) 首")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.secondary)
+                if groups.count > 1 {
+                    Text("· \(groups.count) 张专辑")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.secondary)
+                }
                 Text("全部可完整播放")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundColor(.green)
                 Spacer()
             }
+            .padding(.horizontal, 4)
 
-            LazyVStack(spacing: 0) {
-                ForEach(Array(libraryHits.enumerated()), id: \.element.persistentID) { i, m in
-                    libraryRow(m, index: i)
-                    if i != libraryHits.count - 1 {
-                        Divider().padding(.leading, 66)
-                    }
+            LazyVStack(spacing: 14) {
+                ForEach(groups) { g in
+                    albumCard(g)
                 }
             }
-            .padding(.vertical, 4)
-            .glass()
         }
     }
 
-    private func libraryRow(_ m: MPMediaItem, index: Int) -> some View {
-        let playing = hub.current?.mediaID == m.persistentID
-        return Button {
-            playLibrary(at: index)
-        } label: {
+    /// 一张专辑：标题栏 + 曲目表
+    private func albumCard(_ g: AlbumGroup) -> some View {
+        VStack(spacing: 0) {
             HStack(spacing: 12) {
-                TrackArt(title: m.title ?? "未知曲目",
-                         mediaID: m.persistentID,
-                         size: 50)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(m.title ?? "未知曲目")
-                        .font(.system(size: 15, weight: playing ? .semibold : .regular))
-                        .foregroundColor(playing ? .accentColor : .primary)
+                TrackArt(title: g.title, mediaID: g.sampleID, size: 54)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(g.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(.primary)
                         .lineLimit(1)
-                    Text(librarySubtitle(m))
+                    Text(g.artist.isEmpty ? "\(g.tracks.count) 首" : "\(g.artist) · \(g.tracks.count) 首")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
+                Button {
+                    guard let first = g.tracks.first else { return }
+                    playLibrary(at: first.index)
+                } label: {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 26))
+                        .foregroundColor(.accentColor)
+                        .frame(width: 40, height: 40)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(ScaleButtonStyle(scale: 0.88))
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+            Divider().padding(.leading, 12)
+
+            ForEach(g.tracks.indices, id: \.self) { i in
+                let t = g.tracks[i]
+                albumTrackRow(t.item, position: i + 1, index: t.index, showArtist: g.artist.isEmpty)
+                if i != g.tracks.count - 1 {
+                    Divider().padding(.leading, 44)
+                }
+            }
+            .padding(.bottom, 4)
+        }
+        .glass()
+    }
+
+    private func albumTrackRow(_ m: MPMediaItem,
+                               position: Int,
+                               index: Int,
+                               showArtist: Bool) -> some View {
+        let playing = hub.current?.mediaID == m.persistentID
+        let no = m.albumTrackNumber > 0 ? m.albumTrackNumber : position
+        return Button {
+            playLibrary(at: index)
+        } label: {
+            HStack(spacing: 10) {
+                Text("\(no)")
+                    .font(.system(size: 12, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(.secondary)
+                    .frame(width: 22, alignment: .trailing)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(m.title ?? "未知曲目")
+                        .font(.system(size: 15, weight: playing ? .semibold : .regular))
+                        .foregroundColor(playing ? .accentColor : .primary)
+                        .lineLimit(1)
+                    if showArtist {
+                        Text(m.artist ?? "")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 6)
+
                 if playing && hub.isPlaying {
                     Image(systemName: "waveform")
                         .font(.system(size: 13))
@@ -317,18 +428,12 @@ struct MusicView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.leading, 12)
+            .padding(.trailing, 14)
             .padding(.vertical, 8)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-
-    private func librarySubtitle(_ m: MPMediaItem) -> String {
-        let artist = m.artist ?? ""
-        let album = m.albumTitle ?? ""
-        if artist.isEmpty { return album }
-        return album.isEmpty ? artist : "\(artist) · \(album)"
     }
 
     /// 点哪首放哪首：队列就是当前看到的这串结果，每首带着 persistentID，不会串歌。
@@ -658,8 +763,9 @@ struct MiniPlayerBar: View {
 //   🔈 ══════ 音量 ══════ 🔊
 //   [ Apple Music 底部那排歌词/待播/AirPlay 换成训练状态 ]
 //
-// 进度条、音量条都是「白灰玻璃条」：8pt 厚，浅灰轨道 + 白色（深色模式）
-// 或深灰（浅色模式）已播放段，边缘 0.5pt 高光描边，没有圆点把手。
+// 背景是灰色液态玻璃（灰底 + 半透明材质 + 中性柔光），整页固定深色，
+// 所以进度条 / 音量条是白色（97% 白 + 0.5pt 高光描边），不再随浅色模式变黑。
+// 封面按 Apple Music 的比例取屏宽 76%、上限 320。
 
 struct NowPlayingView: View {
     @ObservedObject var hub = MusicHub.shared
@@ -675,7 +781,8 @@ struct NowPlayingView: View {
         GeometryReader { geo in
             // 除封面以外的固定高度合计
             let fixed: CGFloat = 372
-            let side = max(140, min(geo.size.width - 32, geo.size.height - fixed, 352))
+            // 封面比例照 Apple Music：约屏宽 76%，上限 320，小屏也不会顶满两边
+            let side = max(130, min(geo.size.width * 0.76, geo.size.height - fixed, 320))
 
             VStack(spacing: 0) {
                 grabber
@@ -712,14 +819,45 @@ struct NowPlayingView: View {
         }
         .background { playerBackground }
         .offset(y: max(0, dragOffset))
+        // 播放页固定深色：灰色玻璃底 + 白色文字 / 白色条，浅色系统下也一致
+        .environment(\.colorScheme, .dark)
+        .preferredColorScheme(.dark)
         .sheet(isPresented: $showQueue) {
             QueueSheet()
         }
     }
 
-    /// 纯色底，不再有渐变 / 柔光色斑（和全局一致）。
+    /// 灰色液态玻璃底：灰底 + 半透明材质 + 一层薄白涂层 + 两团中性柔光。
+    /// 不用彩色渐变，只有灰度，所以不会发蓝发紫。
     private var playerBackground: some View {
-        Color(UIColor.systemBackground).ignoresSafeArea()
+        ZStack {
+            // 灰底：比系统背景更深一档，白条才有对比
+            Color(white: 0.13)
+
+            // 液态玻璃主体：透出身后内容再磨一遍
+            Rectangle()
+                .fill(.ultraThinMaterial)
+
+            // 玻璃上的中性柔光（只有灰，没有色相）
+            Circle()
+                .fill(Color.white.opacity(0.10))
+                .frame(width: 420, height: 420)
+                .blur(radius: 130)
+                .offset(x: -110, y: -260)
+
+            Circle()
+                .fill(Color.white.opacity(0.05))
+                .frame(width: 460, height: 460)
+                .blur(radius: 150)
+                .offset(x: 130, y: 300)
+
+            // 极薄的表面涂层，给玻璃一点“釉面”感
+            Color.white.opacity(0.03)
+        }
+        // 材质必须按深色渲染，否则浅色系统下会被磨成灰白，白条看不见
+        .environment(\.colorScheme, .dark)
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 
     // MARK: 抓手
@@ -1149,10 +1287,10 @@ struct GlassBar: View {
             ZStack(alignment: .leading) {
                 // 轨道：玻璃槽
                 Capsule(style: .continuous)
-                    .fill(Color.primary.opacity(scheme == .dark ? 0.16 : 0.12))
+                    .fill(Color.primary.opacity(scheme == .dark ? 0.22 : 0.12))
                     .overlay(
                         Capsule(style: .continuous)
-                            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45),
+                            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.12 : 0.45),
                                           lineWidth: 0.5)
                     )
                     .frame(height: trackHeight)
@@ -1162,14 +1300,14 @@ struct GlassBar: View {
                     .fill(fillColor)
                     .overlay(
                         Capsule(style: .continuous)
-                            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.55 : 0.30),
+                            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.65 : 0.30),
                                           lineWidth: 0.5)
                     )
                     .frame(height: trackHeight)
                     .mask(alignment: .leading) {
                         Rectangle().frame(width: w * p)
                     }
-                    .shadow(color: fillColor.opacity(0.35), radius: 4, y: 0)
+                    .shadow(color: fillColor.opacity(scheme == .dark ? 0.45 : 0.35), radius: 4, y: 0)
             }
             .frame(width: w, height: max(trackHeight, 26))
             .contentShape(Rectangle())
@@ -1200,7 +1338,7 @@ struct GlassBar: View {
 
     private var fillColor: Color {
         scheme == .dark
-            ? Color.white.opacity(0.92)
+            ? Color.white.opacity(0.97)
             : Color(white: 0.12).opacity(0.86)
     }
 }
