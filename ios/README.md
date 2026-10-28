@@ -1,4 +1,4 @@
-# REPS iOS · 4.4.0
+# REPS iOS · 4.5.0
 
 纯 SwiftUI 原生 App（不是网页壳），源码在 `ios/REPS/`，由 GitHub Actions 在 macOS 上编译成未签名 IPA。
 
@@ -9,10 +9,10 @@
 **下载（免登录直链）**
 
 ```
-https://github.com/klein7syd/gym/releases/download/v4.4.0/REPS-4.4.0-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.5.0/REPS-4.5.0-unsigned.ipa
 ```
 
-Release 页：https://github.com/klein7syd/gym/releases/tag/v4.4.0
+Release 页：https://github.com/klein7syd/gym/releases/tag/v4.5.0
 
 **签名（Windows 上用 Sideloadly）**
 
@@ -61,6 +61,29 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.4.0
 只有付费开发者账号能勾选，Sideloadly 自签一定没有。MediaPlayer 这条路只需要
 `NSAppleMusicUsageDescription`，自签也能用。
 
+### 3.5 搜索结果按专辑排版
+
+搜出来不再是一串散歌，而是一张专辑一块：
+
+```
+[封面] 叶惠美                    ▶
+       周杰伦 · 2 首
+──────────────────────────
+   1   以父之名                 5:42
+   2   晴天                     4:29
+
+[封面] 七里香                    ▶
+       周杰伦 · 1 首
+──────────────────────────
+   1   七里香                   4:59
+```
+
+- 组内按 **碟号 + 音轨号** 排序，每行左边显示音轨号
+- 组标题右边一个「播放全部」，从该专辑第一首开始
+- 没有专辑名的散装单曲统一归到「未知专辑」，不会一首一个标题栏
+- 顶部统计：`我的资料库 · N 首 · M 张专辑 · 全部可完整播放`
+- 队列仍是整串结果，点组内某一首就从那儿接着放（persistentID 精确寻址）
+
 ### 4. 进度条 / 音量条：8pt 白灰玻璃
 
 - 从 4pt 加粗到 **8pt**，命中区 26pt
@@ -69,7 +92,12 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.4.0
 - 没有圆点把手，按住任意位置拖动，点哪儿跳哪儿
 - 音量条拖的仍是真实系统音量（`MPVolumeView` 内部 `UISlider`），和侧边键同步
 
-### 5. 播放页：照 Apple Music 排
+### 5. 播放页：照 Apple Music 排 · 灰色液态玻璃
+
+背景是**灰色液态玻璃**：`灰底(0.13) + ultraThinMaterial + 两团中性柔光 + 薄白釉面`，只有灰度没有色相。
+整页固定深色（`environment(.dark)` + `preferredColorScheme(.dark)`），浅色系统下也一样，状态栏图标自动转白。
+因此**进度条 / 音量条是白色**：97% 白填充、0.5pt 高光描边、轻微白色外发光，轨道 22% 白。
+封面按 Apple Music 比例：`屏宽 × 0.76`、上限 320、最小 130。
 
 ```
         ── 抓手 ──
@@ -160,14 +188,14 @@ python tools/download-ipa.py
 
 ## 五、版本对照
 
-| | 1.0 网页壳 | 2.0 原生 | 3.0 液态玻璃 | 4.1 | 4.3 | 4.4 |
+| | 1.0 网页壳 | 2.0 原生 | 4.1 | 4.3 | 4.4 | 4.5 |
 |---|---|---|---|---|---|---|
-| 底部栏 | 系统 TabView | 系统 TabView | 自绘悬浮胶囊 | 系统 TabView | 系统 TabView | 系统 TabView |
-| 音乐搜索 | 仅本地 | 仅本地 | 搜索后跳转（空壳） | 30 秒试听 | 只搜资料库 | **打分 + 相关性门限 + 拼音** |
-| 播放 | — | 本地文件 | — | 资料库完整播放 | persistentID 精确寻址 | 后台设队列，不卡 |
-| 封面 | — | — | — | 只有全屏页有 | 只有全屏页有 | **所有位置都有** |
-| 播放页 | 无 | 无 | 无 | 音量 / 循环 / 列表 / 训练状态 | 细条 + 重排 | **8pt 白灰玻璃条，照 Apple Music 排** |
-| 身体数据 | 无 | 只有动作 1RM | 按当天自动落点 | 可按任意日期补记 | 可按任意日期补记 | 可按任意日期补记 |
+| 底部栏 | 系统 TabView | 系统 TabView | 系统 TabView | 系统 TabView | 系统 TabView | 系统 TabView |
+| 音乐搜索 | 仅本地 | 仅本地 | 30 秒试听 | 只搜资料库 | 打分 + 相关性门限 + 拼音 | **按专辑分组排版** |
+| 播放 | — | 本地文件 | 资料库完整播放 | persistentID 精确寻址 | 后台设队列，不卡 | 后台设队列，不卡 |
+| 封面 | — | — | 只有全屏页有 | 只有全屏页有 | 所有位置都有 | 所有位置都有 |
+| 播放页 | 无 | 无 | 音量 / 循环 / 列表 / 训练状态 | 细条 + 重排 | 8pt 白灰玻璃条 | **灰色液态玻璃底 + 白条 + Apple Music 封面比例** |
+| 身体数据 | 无 | 只有动作 1RM | 可按任意日期补记 | 可按任意日期补记 | 可按任意日期补记 | 可按任意日期补记 |
 
 ---
 
