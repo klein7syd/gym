@@ -1,4 +1,4 @@
-# REPS iOS · 4.9.4
+# REPS iOS · 4.9.5
 
 纯 SwiftUI 原生 App（不是网页壳），源码在 `ios/REPS/`，由 GitHub Actions 在 macOS 上编译成未签名 IPA。
 
@@ -9,10 +9,10 @@
 **下载（免登录直链）**
 
 ```
-https://github.com/klein7syd/gym/releases/download/v4.9.4/REPS-4.9.4-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.9.5/REPS-4.9.5-unsigned.ipa
 ```
 
-Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.4
+Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.5
 
 **签名（Windows 上用 Sideloadly）**
 
@@ -26,7 +26,24 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.4
 
 ---
 
-## 二、4.9.4 这一版做了什么
+## 二、4.9.5 这一版做了什么
+
+### 组间休息：绿色倒计时环 + 时长可调
+- `RestStyle.ring = Color.green`（Theme.swift）。`RestRing` / `MiniRestRing` 的**进度弧**改用它；
+  底环、尺寸、线宽、0.2s linear 动画不动；环内文字原为 `.primary`，未改；
+  训练本身的 accentColor 一律不动。
+- 训练页 `exerciseCard` 下新增常驻一行「组间休息 120s ›」，点击弹 `RestSettingSheet`：
+  Stepper 15–600s 步长 15 + 快捷芯片，改动立即写 `store.restSeconds`（Store clamp 并 save）。
+- `RestTimer.finish()` 首行加 `cancelNotification()`，避免前台归零后稍后再弹一条重复通知。
+
+### 现状（第 0 步结论）
+训练主页的圈本来就是 `rest.progress` 驱动、且只在 `rest.isRunning` 时出现（情形 A，只改色）；
+三处「完成一组」都已 `rest.start(seconds: store.restSeconds)`；三处都有 +30 / 跳过；
+触觉、本地通知、按 endDate 重算、start 不叠加计时器均已具备。
+
+---
+
+## 二·旧：4.9.4 这一版做了什么
 
 ### 修「下拉关闭时底下页面深/浅跳变」
 4.9.3 为了消抖让拖动全程 `forceDark = true`，于是下拉露出的是**深色版**页面，

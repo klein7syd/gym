@@ -1,212 +1,204 @@
-REPS iOS 4.9.4（build 14）交付说明
+REPS iOS 4.9.5（build 15）交付说明
 ======================================================================
 
 一、安装包
 ----------------------------------------------------------------------
-文件：REPS-4.9.4-unsigned.ipa
-大小：930,201 字节
-SHA256：d5b183b960d8d29a8d9f9381447a211e8a1a5585f7bfcec5ba30d381c1fe55df
-MD5：da53eb791f1353ca02808880c9e1f677
+文件：REPS-4.9.5-unsigned.ipa
+大小：947,875 字节
+SHA256：8d4b19931b876814c998b7d70280dd48e60d2be45d02e377aa4e86b32ede8028
+MD5：98e87f72a85802e59ae14fe3f85f7703
 直链（免登录）：
-https://github.com/klein7syd/gym/releases/download/v4.9.4/REPS-4.9.4-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.9.5/REPS-4.9.5-unsigned.ipa
 
-CI：GitHub Actions run 40656526040，一次通过（macos-latest / Xcode 26.6 / iOS SDK 26.5）
-包内 Info.plist：CFBundleShortVersionString = 4.9.4，CFBundleVersion = 14，
-DTSDKName = iphoneos26.5
-包内二进制已确认含符号：beginDismiss / cancelDismiss / isDragging / DimOverlay / CardClip
-（setDragging 是极小的内部函数，Release 编译时被内联，查不到符号名属正常）
+CI：GitHub Actions run 40660672175，一次通过（macos-latest / Xcode 26.6 / iOS SDK 26.5）
+包内 Info.plist：4.9.5 / build 15，DTSDKName = iphoneos26.5
+包内二进制已确认含符号：RestStyle / RestRing / MiniRestRing / RestSettingSheet
 
 签名照旧：包是**未签名**的，需用 Sideloadly 自行签名安装。
 
 
-二、改了什么 / 为什么
+二、第 0 步：现状核查（a–d 的答案）
 ----------------------------------------------------------------------
 
-【根因】
+a. 训练主页那个「随倒计时走的圆圈」由什么驱动？
+   已经是 rest.progress —— `TrainView.restCard` 里的 `RestRing(progress: rest.progress,
+   text: rest.remainingText)`，而整个 restCard 包在 `if rest.isRunning { … }` 里。
+   不是训练计时、也不是目标时间。→ 属于**情形 A**，本轮只改颜色，不新增/覆盖任何圈。
 
-下拉期间底下露出来的 TabView 是哪一版配色，完全取决于 PlayerPresenter.forceDark。
+b. 三处「完成一组」是否都会 rest.start(seconds: store.restSeconds)？
+   是，三处都齐：
+     · TrainView.completeSet()（训练页「完成一组」）
+     · NowPlayingView.completeSet()（播放页训练卡的「完成」）
+     · TrainingSheet.completeSet()（训练面板的「完成一组」）
+   三者都是「ensureSession → logSet → 触觉反馈 → rest.start(seconds: store.restSeconds)」。
 
-4.9.3 为了消除闪烁，让拖动全程 forceDark = true。结果：
-  · 下拉时露出的是**深色版**页面；
-  · 关闭时才（0.30s 回调里）切回浅色 → 那一整页当场由深变亮 = 你看到的「深色/亮色跳变」。
+c. 休息结束的提醒 / 后台 / 回前台重算：
+   · 触觉：有（finish() 里 UINotificationFeedbackGenerator().notificationOccurred(.success)，
+     并叠加 SystemSound 1005 + kSystemSoundID_Vibrate）；
+   · 本地通知：有（RestTimer.scheduleNotification 用 UNTimeIntervalNotificationTrigger，
+     identifier = "reps.rest.finished"；REPSApp.init 里已请求授权）；
+   · 回前台：有（remaining 一直按 endDate − tick 计算，tick 由 0.2s Timer 和
+     willEnterForegroundNotification 刷新；回前台若已过期直接 finish()）。
+   本轮只补一处：finish() 里加 cancelNotification()，避免「前台已判定归零、通知才触发」
+   导致稍后再弹一条重复提醒。
 
-4.9.2 的思路其实是对的：下拉露出来的页面应当**一开始就是最终那一版浅色**，
-所以切色必须发生在「拖动刚开始、位移还只有几 pt、底下几乎没露出」的那一帧。
+d. store.restSeconds 在哪可以改？
+   两处已存在：
+     · 我的页 → 训练设置：60 / 90 / 120 / 180 四个预设；
+     · 训练页休息卡里：同样四个预设芯片（休息中可见）。
+   但都只有固定预设、且训练页那排只在休息中才出现。本轮**新增**训练页常驻入口 +
+   15–600s、步长 15 的 Stepper（见下）。
 
-当时之所以会闪，根因是 DragGesture 的 .local 坐标空间（4.9.3 已用 .global 修掉），
-和配色切换这件事无关。两件事必须分开看。
 
-【1】恢复 beginDismiss()
+三、改了什么 / 为什么
+----------------------------------------------------------------------
 
-    func beginDismiss() {
-        guard forceDark else { return }
-        var t = Transaction(); t.disablesAnimations = true
-        withTransaction(t) { forceDark = false }
+【1】颜色：休息绿、训练蓝
+
+Theme.swift 新增：
+
+    enum RestStyle {
+        static let ring = Color.green
     }
 
-无动画切换 —— 带动画会变成 0.4s 渐变，叠在手势上更花。
+- RestRing（训练页组间歇倒计时）进度弧：Color.accentColor → RestStyle.ring
+- MiniRestRing（播放页训练卡 / TrainingSheet）进度弧：Color.accentColor → RestStyle.ring
+- 底环（Color(UIColor.tertiarySystemFill)）不动；尺寸、线宽（12 / size*0.09）、
+  0.2s linear 动画全不动
+- 两个环中间的倒计时文字本来就是 .primary，不是 accentColor，按规则**未改**
+- 训练页的预设芯片、按钮、选中胶囊等 accentColor 一律未动（训练本身仍是蓝色）
 
-【2】新增 isDragging（普通属性，不是 @Published）
+【2】训练页新增休息时长入口（Stepper）
 
-    private(set) var isDragging = false
-    func setDragging(_ v: Bool) { isDragging = v }
+- 在 exerciseCard 下方加一行常驻卡片：`⏱ 组间休息 ——— 120s ›`，数字用 RestStyle.ring 绿色；
+  点整行弹出 RestSettingSheet。
+- RestSettingSheet：
+    · 大号绿色数字显示当前值；
+    · Stepper(value: $value, in: 15...600, step: 15)；
+    · 45 / 60 / 90 / 120 / 180 快捷芯片；
+    · 每次改动立刻 store.restSeconds = value（Store 内部 clamp 15…600 并 save()）。
+- 不新增任何存储字段：restSeconds 本来就在 PersistedState 里，旧存档解码缺字段默认 120
+  （Models.swift 里 (try? c.decode(Int.self, forKey: .restSeconds)) ?? 120），完全向后兼容。
+- 这行在休息中也可见，正好贴在绿色倒计时圈的正上方。
 
-只给 cancelDismiss 的延迟回调做守卫用，不需要触发任何视图刷新，所以刻意不加 @Published。
+【3】RestTimer.finish() 取消排队通知
 
-【3】恢复 cancelDismiss()
-
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) {
-        guard self.isOpen, self.pull == 0, !self.isDragging else { return }
-        self.forceDark = true
+    private func finish() {
+        cancelNotification()   // ← 本轮新增这一行
+        endDate = nil
+        …
     }
 
-0.36s 略大于弹回 spring 的 0.34s，等卡片回到原位、重新盖满屏之后才切深色，看不见。
-!isDragging 防止：用户在 0.36s 内又开始拖，结果被回调拉回深色。
+理由：前台 tick 可能比通知触发早几十毫秒判定归零，不取消的话稍后一进后台会再弹一条。
 
-【4】close() 恢复 4.9.2 逻辑
+【已有，未重写】功能清单里的 1 / 2 / 4 / 5 / 6 都已经实现，只在第 4 项补了上面那一行。
+【功能对照表】
 
-    guard isOpen else { return }
-    pull = 0
-    if forceDark {
-        无动画 forceDark = false
-        asyncAfter(0.05) { withAnimation(spring 0.40 / 0.92) { isOpen = false } }
-    } else {
-        withAnimation(spring 0.40 / 0.92) { isOpen = false }
-    }
-
-先切浅色、让配色单独渲染一帧，0.05s 后再启动下滑 —— 播放页滑出的整个过程里，
-底下露出来的都是已经切好的浅色页面。
-**4.9.3 里「0.30s 后才 forceDark = false」的整段回调已删除**，它就是跳变来源。
-
-【5】⌄ 按钮关闭同样走 close()，行为完全一致。
-
-【6】open() 保持 0.52s 后 forceDark = true，回调里查 isOpen；
-    额外加了一个 !isDragging 守卫，见下面第六节「本版偏离说明」。
-
-【7】dismissDrag（MusicView）
-
-onChanged：
-    let h = max(0, v.translation.height)
-    if h > 0 && !dismissing { dismissing = true; player.setDragging(true); player.beginDismiss() }
-    dragOffset = h
-    player.pull = min(1, h / 260)
-
-onEnded：
-    dismissing = false; player.setDragging(false)
-    far → player.close()
-    否则 withAnimation(spring 0.34 / 0.86) { dragOffset = 0; player.pull = 0 }
-         然后 player.cancelDismiss()
-
-【8】核查项（均通过，未改动）
-  · DragGesture(minimumDistance: 8, coordinateSpace: .global) —— 已是 .global
-  · cover(side:) 上没有 .animation(.easeOut(duration: 0.25), value: side) —— 已删除，没回退
+  功能                                 状态    位置
+  ----------------------------------  ------  --------------------------------------------
+  1 完成一组 → 记组 + 立刻开始休息      已有    三处 completeSet
+  2 倒计时中 +30 / 跳过（三处一致）     已有    三处休息卡/训练卡
+  3 休息时长可调（15–600，步长 15）     新增    TrainView.restSettingRow + RestSettingSheet
+  4 结束触觉 + 后台本地通知             已有    RestTimer.finish / scheduleNotification
+    4' finish 时取消排队通知            新增    RestTimer.finish 第一行
+  5 剩余时间按 endDate − now            已有    RestTimer.remaining
+  6 休息中再次完成一组不叠加            已有    start() 内重建 endDate + 先取消通知 + ticker 先停
 
 
-三、文件变更清单
+四、文件变更清单
 ----------------------------------------------------------------------
 
 新增文件：无
 删除文件：无
 Info.plist：未改动
 依赖：未新增
-未改动：CardClip（mask + ignoresSafeArea）、DimOverlay、AppBackground、GlassBar、VolumeBar、
-        MiniPlayerBar、QueueSheet、preferredColorScheme、REPSApp.swift（本轮未改）、
-        所有既有数值（34 / 20 / 0.94 / 0.06 / 0.42 / 260 / 110 / 0.5 / 0.13 / 340 / 0.82 / 24 / 462）
+存储结构：未改动（restSeconds 复用 PersistedState 既有字段）
+未改动：MusicView.swift、PlayerChrome.swift、REPSApp.swift、Store.swift、Models.swift、
+        以及所有既有尺寸 / 线宽 / 动画参数
 
-修改（3 个）：
-  ios/REPS/PlayerChrome.swift
-      · 恢复 beginDismiss()
-      · 新增 isDragging + setDragging(_:)
-      · 恢复 cancelDismiss()（含 !isDragging 守卫）
-      · close() 恢复「先切浅色 → 0.05s 后下滑」，删除 0.30s 回调
-      · open() 的 0.52s 回调增加 !isDragging 守卫
-  ios/REPS/MusicView.swift
-      · 新增 @State dismissing
-      · dismissDrag.onChanged：首帧 setDragging(true) + beginDismiss()
-      · dismissDrag.onEnded：setDragging(false)，弹回分支调用 cancelDismiss()
+修改（5 个）：
+  ios/REPS/Theme.swift
+      · 新增 enum RestStyle { static let ring = Color.green }
+  ios/REPS/Components.swift
+      · RestRing 进度弧 → RestStyle.ring
+      · MiniRestRing 进度弧 → RestStyle.ring
+  ios/REPS/TrainView.swift
+      · @State showRestSetting
+      · VStack 中 exerciseCard 之后插入 restSettingRow
+      · .sheet 挂 RestSettingSheet
+      · 新增 restSettingRow 视图
+      · 文件末尾新增 struct RestSettingSheet
+  ios/REPS/RestTimer.swift
+      · finish() 首行加 cancelNotification()
   ios/project.yml
-      · MARKETING_VERSION 4.9.3 → 4.9.4
-      · CURRENT_PROJECT_VERSION 13 → 14
-
-REPSApp.swift 本轮**未改动**（任务书第三节要求核查，层级与数值都已确认无需改）。
+      · MARKETING_VERSION 4.9.4 → 4.9.5，CURRENT_PROJECT_VERSION 14 → 15
 
 
-四、参数含义
+五、参数含义
 ----------------------------------------------------------------------
 
-beginDismiss()     拖动第一帧调用；仅当 forceDark == true 时无动画置 false
-isDragging         普通属性（非 @Published），标记「手指是否按下并拖动中」
-setDragging(_:)    唯一写入点：onChanged 首帧置 true，onEnded 置 false
-cancelDismiss()    弹回时调用；延迟 0.36s，复查 isOpen && pull == 0 && !isDragging
-0.36s              弹回 spring 是 response 0.34，取 0.36 保证动画已结束
-close()
-  0.05s            先切浅色后等一帧（约 3 帧 @60Hz）再启动下滑动画
-  spring 0.40 / 0.92   关闭动画，未改
-open()
-  0.52s            打开 spring 是 response 0.46，取 0.52 保证已盖满屏
-  spring 0.46 / 0.90   打开动画，未改
-dismissDrag
-  minimumDistance 8  起拖阈值，保证 ⌄ / ⋯ 按钮可点
-  coordinateSpace    .global（4.9.3 起）
-  h = max(0, dy)     只允许往下拉
-  pull = min(1, h/260)   260pt 视为拉到底，控制下层 scale / 压暗 / 圆角
-  far 判定           dy > 110 或 predicted > 260
-  弹回               spring 0.34 / 0.86
-
-配色与下层（本轮未改，仅核查）：
-  forceDark = false  → preferredColorScheme 传 nil，跟随系统
-  底层 AppBackground() → Color(white: 0.13)（opacity 随 isOpen）→ TabView
-  压暗 0.42 * (1 - pull)
+RestStyle.ring       组间歇专用绿；只用于两个休息环的进度弧
+Stepper 范围          15...600（秒），步长 15
+store.restSeconds     get 直读 state；set 时 clamp 到 15…600 并 save()（Store.swift）
+默认值                120（PersistedState 默认值 + 解码兜底，旧存档安全）
+rest.progress         1 − remaining/total，remaining = max(0, ceil(endDate − tick))
+rest.progress 动画    .linear(duration: 0.2)，未改
+RestRing 线宽         12；MiniRestRing 线宽 size * 0.09（62 / 58 两处调用），未改
+RestTimer tick        0.2s（RunLoop .common），另有 willEnterForeground 时刷新并补判过期
+finish()              cancelNotification → endDate=nil → 停 ticker → 恢复 idleTimer →
+                      系统音 1005 + 震动 + .success 触觉
+通知 identifier       "reps.rest.finished"（start / skip / finish 都会取消它）
 
 
-五、怎么测试
+六、怎么测试
 ----------------------------------------------------------------------
 
-① 浅色系统模式：缓慢下拉到一半**不松手**，停住 3 秒
-   预期：底下露出来的那半屏页面**始终是浅色**，从第一 pt 到停住那一刻都不变色；
-         同时卡片不抖（.global 未回退）。
+① 训练页点「完成一组」
+   预期：组被记录；页面出现**绿色**倒计时圈（底环灰色不变），数字逐秒递减。
 
-② 松手弹回 → 再下拉到底关闭
-   预期：弹回全程浅色不变；关闭时播放页往下滑出，底下自始至终是浅色页面，
-         不会出现「滑到一半底下突然由深变亮」。
+② 休息中点「+30 秒」→ 再点「跳过」
+   预期：+30 让剩余时间加 30 秒且圈不重置；跳过立刻收起休息卡、恢复常态（蓝色界面）。
 
-③ 点左上角 ⌄ 按钮关闭
-   预期：与 ② 一致，全程浅色，无跳变。
+③ 再点一次「完成一组」
+   预期：重新开始一轮倒计时（不会出现两个计时器、数字不会双倍速跳）。
 
-④ 深色系统模式把 ①~③ 各做一遍
-   预期：一样无跳变。forceDark = false 时状态栏跟随系统（深色），不存在浅/深打架。
+④ 改休息时长
+   点训练页「组间休息 120s ›」→ Stepper 调到 60 → 完成 → 点「完成一组」
+   预期：按 60s 倒计时；杀掉 App 重开，入口处仍显示 60s。
 
-⑤ 打开后 0.5s 内立刻关闭，连做 5 次
-   预期：状态栏文字颜色始终与当前页面匹配，不会卡在某一色，也不会出现整屏闪白。
+⑤ 播放页训练卡 / 训练面板的休息圈
+   预期：同样是绿色，且与训练页是同一个计时器（三处数字同步）。
 
-⑥ 顺带回归：播放页里拖进度条 / 音量条是否跟手；播放列表拖动排序是否正常。
+⑥ 锁屏 / 切后台
+   开始休息 → 锁屏 30 秒 → 回来：剩余时间正确（按结束时间戳算，不是累减）。
+   再试：开始休息 → 立刻切后台 → 等到点：收到「休息结束」本地通知。
+   再试：开始休息 → 点「跳过」→ 切后台：**不应**再收到通知。
+
+⑦ 训练页完成一组 → 看绿圈 → +30 → 跳过 → 再完成一组（完整跑一遍上表 1/2/6）
+
+⑧ 改休息时长为 60s，完成一组验证（对应上表 3）
+
+⑨ 开始休息后锁屏 30 秒再回来，以及切后台等到通知（对应上表 5 / 4）
+
+⑩ 回归：训练本身的蓝色（完成一组按钮、选中胶囊、勾选图标）是否仍为蓝色，没被染绿。
 
 
-六、已知限制
+七、已知限制
 ----------------------------------------------------------------------
 
 1. **未在真机验证。** 本机 Windows，无 Mac、无 iPhone。CI 只验证了编译通过、包结构、
-   版本号 4.9.4 / 14、二进制含预期符号。颜色跳变是否真的消失**必须由你在手机上确认
-   ①②③ 三步**。
+   版本号 4.9.5 / 15、二进制含预期符号。请重点确认 ①②④⑤⑥。
 
-2. **状态栏会瞬间闪一下（预期行为，不是 bug）。**
-   下拉最初那几 pt —— 也就是切配色的那一帧 —— 状态栏文字会由白变黑，短暂压在深色播放页上。
-   这是「把切色提前到几乎看不见位移的那一帧」的必然代价。要彻底消除它，只能改成给状态栏单独
-   指定颜色（改 navigationBar / statusBar 的外观策略），那条路风险更大，本版不走。
+2. 训练页原有四个预设芯片（60/90/120/180）与新的 Stepper 并存。
+   用 Stepper 设成非预设值（如 45s、150s）时，那排芯片都不高亮 —— 功能正常，只是没有选中态。
 
-3. **本版有一处偏离任务书**：open() 的 0.52s 回调里，除了 `isOpen` 还多了 `!isDragging`。
-   原因：若用户在打开后约 0.3s 就开始下拉（播放页还在滑入、forceDark 仍为 false），
-   0.52s 回调会把窗口切成深色 —— 又是在拖动中途翻色，等于没修好。
-   加上守卫后这种情况保持浅色，由 cancelDismiss 的 0.36s 回调兜底恢复深色。
-   除这一个条件外，open() 与任务书完全一致。
+3. 播放页训练卡里那个「\(restSeconds)s」小按钮仍然是「点一下立刻按这个时长开始休息」，
+   不是设置入口；设置入口只放在训练页（按任务书要求）。
 
-4. RootTabView 的 body 仍然读 pull（scaleEffect / CardClip 半径必须作用在 TabView 上），
-   所以拖动时根视图依旧每帧求值。这是性能层面的遗留，不影响本版要修的颜色跳变。
+4. 倒计时圆圈是「进度弧从空长到满」（progress = 1 − remaining/total），
+   不是从满缩到空。这是原有表现，本轮按「已有的不要重写」未改。
 
-5. 拖动到一半时，播放页上下两条安全区会被 CardClip 的 mask 裁掉（仅拖动过程，松手恢复）。
+5. 本地通知在 App 处于前台时不会弹横幅（没有设置 UNUserNotificationCenter delegate），
+   前台靠系统音 + 震动 + 触觉反馈提醒 —— 这是原有行为。
 
-6. 整首播放依赖歌曲已在 Apple Music「资料库」中；系统音量仍只有 16 级（iOS 限制）。
-
-7. GlassBar 的 DragGesture(minimumDistance: 0) 仍用 .local —— 已核查：它读的是 v.location.x，
-   所在视图不会被位移（拖动播放页时整张卡片一起位移，局部 x 不变；进度条自身拖动不会移动卡片），
-   保持不动。Components.swift 里 RepeatButton 的 DragGesture 不使用 translation，同样不受影响。
+6. 系统音量仍 16 级、整首播放依赖资料库等既有音乐侧限制与本轮无关，未改动。
