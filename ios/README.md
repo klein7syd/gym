@@ -1,4 +1,4 @@
-# REPS iOS · 4.9.3
+# REPS iOS · 4.9.4
 
 纯 SwiftUI 原生 App（不是网页壳），源码在 `ios/REPS/`，由 GitHub Actions 在 macOS 上编译成未签名 IPA。
 
@@ -9,10 +9,10 @@
 **下载（免登录直链）**
 
 ```
-https://github.com/klein7syd/gym/releases/download/v4.9.3/REPS-4.9.3-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.9.4/REPS-4.9.4-unsigned.ipa
 ```
 
-Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.3
+Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.4
 
 **签名（Windows 上用 Sideloadly）**
 
@@ -26,7 +26,30 @@ Release 页：https://github.com/klein7syd/gym/releases/tag/v4.9.3
 
 ---
 
-## 二、4.9.3 这一版做了什么
+## 二、4.9.4 这一版做了什么
+
+### 修「下拉关闭时底下页面深/浅跳变」
+4.9.3 为了消抖让拖动全程 `forceDark = true`，于是下拉露出的是**深色版**页面，
+关闭时才切浅 → 整页由深变亮 = 跳变。
+4.9.2 的思路才对：下拉露出来的必须一开始就是最终那版浅色，所以切色要发生在**拖动第一帧**。
+当时会闪是因为 `.local` 坐标空间（4.9.3 已改 `.global`），与配色无关 —— 两件事分开。
+
+- `beginDismiss()`：拖动首帧（`h > 0 && !dismissing`）无动画置 `forceDark = false`；
+- `isDragging`（普通属性，非 @Published）+ `setDragging(_:)`；
+- `cancelDismiss()`：弹回后 0.36s 复查 `isOpen && pull == 0 && !isDragging` 再置回深色；
+- `close()`：有深色就先无动画切浅、`asyncAfter(0.05)` 再起下滑；已切过则直接下滑。
+  删除 4.9.3 的「0.30s 后才切色」回调。
+
+### 偏离说明（一处）
+`open()` 的 0.52s 回调增加 `!isDragging`：否则「打开后 0.3s 开始下拉」会被回调切回深色，
+又成了拖动中途翻色。其余与任务书一致。
+
+### 预期行为
+切色的那一帧（位移几 pt）状态栏会由白变黑压一下，属必然代价。
+
+---
+
+## 二·旧：4.9.3 这一版做了什么
 
 ### 1. 下拉抖动/闪烁的根因：DragGesture 用了 .local
 手势挂在抓手 / 头部 / 封面 / 标题区上，它们都在**被 `.offset(y: dragOffset)` 移动的卡片内部**。

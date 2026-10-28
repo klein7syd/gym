@@ -1,19 +1,20 @@
-REPS iOS 4.9.3（build 13）交付说明
+REPS iOS 4.9.4（build 14）交付说明
 ======================================================================
 
 一、安装包
 ----------------------------------------------------------------------
-文件：REPS-4.9.3-unsigned.ipa
-大小：927,947 字节
-SHA256：40b58492fe435cb0fb327f36238570d128d1f25abd383bceb5410db7c5c84243
-MD5：b770ed3699cb99431bd76dce53a449c4
+文件：REPS-4.9.4-unsigned.ipa
+大小：930,201 字节
+SHA256：d5b183b960d8d29a8d9f9381447a211e8a1a5585f7bfcec5ba30d381c1fe55df
+MD5：da53eb791f1353ca02808880c9e1f677
 直链（免登录）：
-https://github.com/klein7syd/gym/releases/download/v4.9.3/REPS-4.9.3-unsigned.ipa
+https://github.com/klein7syd/gym/releases/download/v4.9.4/REPS-4.9.4-unsigned.ipa
 
-CI：GitHub Actions run 40655073713，一次通过（macos-latest / Xcode 26.6 / iOS SDK 26.5）
-包内 Info.plist：CFBundleShortVersionString = 4.9.3，CFBundleVersion = 13，
+CI：GitHub Actions run 40656526040，一次通过（macos-latest / Xcode 26.6 / iOS SDK 26.5）
+包内 Info.plist：CFBundleShortVersionString = 4.9.4，CFBundleVersion = 14，
 DTSDKName = iphoneos26.5
-包内二进制已确认含符号：DimOverlay / CardClip / NowPlayingView
+包内二进制已确认含符号：beginDismiss / cancelDismiss / isDragging / DimOverlay / CardClip
+（setDragging 是极小的内部函数，Release 编译时被内联，查不到符号名属正常）
 
 签名照旧：包是**未签名**的，需用 Sideloadly 自行签名安装。
 
@@ -21,54 +22,84 @@ DTSDKName = iphoneos26.5
 二、改了什么 / 为什么
 ----------------------------------------------------------------------
 
-【1】根因：下拉手势用了 .local 坐标空间（抖动 / 闪烁的主因）
+【根因】
 
-dismissDrag 挂在抓手、头部、封面、标题区上，而这几个视图都在**被 .offset(y: dragOffset)
-移动的卡片内部**。
+下拉期间底下露出来的 TabView 是哪一版配色，完全取决于 PlayerPresenter.forceDark。
 
-.local 是「视图自身坐标」。手指往下一动 → 卡片跟着下移 → 手指在这个局部坐标里的 y 被抵消
-→ translation.height 变小 → dragOffset 变小 → 卡片弹回去 → 下一帧 translation 又变大……
-形成正反馈回路，画面就是持续抖动 / 闪烁。
+4.9.3 为了消除闪烁，让拖动全程 forceDark = true。结果：
+  · 下拉时露出的是**深色版**页面；
+  · 关闭时才（0.30s 回调里）切回浅色 → 那一整页当场由深变亮 = 你看到的「深色/亮色跳变」。
 
-同时 player.pull = h / 260 也跟着来回跳，于是底下 TabView 的 scaleEffect、CardClip 半径、
-DimOverlay 的压暗全部同步抖 —— 看起来就是「整个屏幕在闪」。
+4.9.2 的思路其实是对的：下拉露出来的页面应当**一开始就是最终那一版浅色**，
+所以切色必须发生在「拖动刚开始、位移还只有几 pt、底下几乎没露出」的那一帧。
 
-改法：DragGesture(minimumDistance: 8, coordinateSpace: .global)。
-全局坐标不随卡片位移变化，拿到的才是手指真实位移，dragOffset 单调跟随。
-阈值（110 / 260）、260pt 满进度、弹回 spring（0.34 / 0.86）一个都没改。
+当时之所以会闪，根因是 DragGesture 的 .local 坐标空间（4.9.3 已用 .global 修掉），
+和配色切换这件事无关。两件事必须分开看。
 
+【1】恢复 beginDismiss()
 
-【2】拖动期间不再切换整个窗口的配色（第二处闪烁来源）
+    func beginDismiss() {
+        guard forceDark else { return }
+        var t = Transaction(); t.disablesAnimations = true
+        withTransaction(t) { forceDark = false }
+    }
 
-4.9.2 在拖动第一帧就 forceDark = false。整个窗口的 userInterfaceStyle 在拖动途中变化，
-会触发全窗口重绘，叠在拖动每帧刷新上就是第二处闪烁。
+无动画切换 —— 带动画会变成 0.4s 渐变，叠在手势上更花。
 
-现在：
-  · 删掉 beginDismiss()、cancelDismiss()，以及 NowPlayingView 里的 dismissing 标记；
-  · 拖动全程 forceDark 保持 true。底下露出的 TabView 是深色版 —— 这是可接受的，
-    因为播放页和压暗层本身就是深色，视觉上连续，且全程没有一次跳变；
-  · 弹回（没拖够）：什么都不做，配色一点不变，纯位置回弹；
-  · 关闭（拖到底 / 点 ⌄）：**先**启动关闭动画，asyncAfter(0.30) 后再在回调里
-    （复查 !isOpen）用 disablesAnimations 的 Transaction 无动画切回浅色。
-    0.30s 时播放页已滑出大半、底层 TabView 已接近 scale 1，切换几乎不可见；
-  · open() 未改：0.52s 后 forceDark = true，回调里复查 isOpen == true，
-    防止 0.5s 内快速开→关时把窗口提前切成深色。
+【2】新增 isDragging（普通属性，不是 @Published）
 
+    private(set) var isDragging = false
+    func setDragging(_ v: Bool) { isDragging = v }
 
-【3】封面去掉隐式动画
+只给 cancelDismiss 的延迟回调做守卫用，不需要触发任何视图刷新，所以刻意不加 @Published。
 
-cover(side:) 上的 .animation(.easeOut(duration: 0.25), value: side) 已删除，没有用别的动画替代。
-side 在拖动 / 安全区回退 / 布局重算时会变，那个 0.25s 动画让封面相对卡片滞后 0.25 秒，
-拖动过程中就会出现「封面和卡片错位」的撕裂帧。
+【3】恢复 cancelDismiss()
 
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) {
+        guard self.isOpen, self.pull == 0, !self.isDragging else { return }
+        self.forceDark = true
+    }
 
-【4】压暗遮罩抽成独立小视图 DimOverlay
+0.36s 略大于弹回 spring 的 0.34s，等卡片回到原位、重新盖满屏之后才切深色，看不见。
+!isDragging 防止：用户在 0.36s 内又开始拖，结果被回调拉回深色。
 
-Color.black.opacity(0.42 * (1 - pull)) 从 RootTabView 的 overlay 里抽成 DimOverlay（只观察 player）。
-数值与动画参数完全不变（0.42 / 0.46 spring / dampingFraction 0.90）。
-DimOverlay 内部额外写了一遍同参数的 .animation(...value: player.isOpen)：因为它现在通过自己的
-订阅收到 isOpen 变化，不保证落在根视图那圈 animation 事务里，少了它可能变成硬切；
-参数与外层一模一样，视觉无差别。scaleEffect 与 CardClip 半径仍留在 RootTabView（按要求未动）。
+【4】close() 恢复 4.9.2 逻辑
+
+    guard isOpen else { return }
+    pull = 0
+    if forceDark {
+        无动画 forceDark = false
+        asyncAfter(0.05) { withAnimation(spring 0.40 / 0.92) { isOpen = false } }
+    } else {
+        withAnimation(spring 0.40 / 0.92) { isOpen = false }
+    }
+
+先切浅色、让配色单独渲染一帧，0.05s 后再启动下滑 —— 播放页滑出的整个过程里，
+底下露出来的都是已经切好的浅色页面。
+**4.9.3 里「0.30s 后才 forceDark = false」的整段回调已删除**，它就是跳变来源。
+
+【5】⌄ 按钮关闭同样走 close()，行为完全一致。
+
+【6】open() 保持 0.52s 后 forceDark = true，回调里查 isOpen；
+    额外加了一个 !isDragging 守卫，见下面第六节「本版偏离说明」。
+
+【7】dismissDrag（MusicView）
+
+onChanged：
+    let h = max(0, v.translation.height)
+    if h > 0 && !dismissing { dismissing = true; player.setDragging(true); player.beginDismiss() }
+    dragOffset = h
+    player.pull = min(1, h / 260)
+
+onEnded：
+    dismissing = false; player.setDragging(false)
+    far → player.close()
+    否则 withAnimation(spring 0.34 / 0.86) { dragOffset = 0; player.pull = 0 }
+         然后 player.cancelDismiss()
+
+【8】核查项（均通过，未改动）
+  · DragGesture(minimumDistance: 8, coordinateSpace: .global) —— 已是 .global
+  · cover(side:) 上没有 .animation(.easeOut(duration: 0.25), value: side) —— 已删除，没回退
 
 
 三、文件变更清单
@@ -78,102 +109,104 @@ DimOverlay 内部额外写了一遍同参数的 .animation(...value: player.isOp
 删除文件：无
 Info.plist：未改动
 依赖：未新增
-未改动：CardClip（mask + ignoresSafeArea）、AppBackground、GlassBar、VolumeBar、
-        MiniPlayerBar、QueueSheet、preferredColorScheme、所有既有数值
+未改动：CardClip（mask + ignoresSafeArea）、DimOverlay、AppBackground、GlassBar、VolumeBar、
+        MiniPlayerBar、QueueSheet、preferredColorScheme、REPSApp.swift（本轮未改）、
+        所有既有数值（34 / 20 / 0.94 / 0.06 / 0.42 / 260 / 110 / 0.5 / 0.13 / 340 / 0.82 / 24 / 462）
 
-修改（4 个）：
-  ios/REPS/MusicView.swift
-      · dismissDrag：DragGesture 加 coordinateSpace: .global，删掉 beginDismiss 调用
-      · 删除 @State dismissing
-      · cover(side:)：删除 .animation(.easeOut(duration: 0.25), value: side)
+修改（3 个）：
   ios/REPS/PlayerChrome.swift
-      · 删除 beginDismiss() / cancelDismiss()
-      · close() 改为「先起关闭动画 → 0.30s 后复查 !isOpen 再切回浅色」
-      · open() 未改（0.52s + isOpen 复查保持原样）
-  ios/REPS/REPSApp.swift
-      · overlay 里的 Color.black 换成 DimOverlay()
-      · 文件末尾新增 private struct DimOverlay
+      · 恢复 beginDismiss()
+      · 新增 isDragging + setDragging(_:)
+      · 恢复 cancelDismiss()（含 !isDragging 守卫）
+      · close() 恢复「先切浅色 → 0.05s 后下滑」，删除 0.30s 回调
+      · open() 的 0.52s 回调增加 !isDragging 守卫
+  ios/REPS/MusicView.swift
+      · 新增 @State dismissing
+      · dismissDrag.onChanged：首帧 setDragging(true) + beginDismiss()
+      · dismissDrag.onEnded：setDragging(false)，弹回分支调用 cancelDismiss()
   ios/project.yml
-      · MARKETING_VERSION 4.9.2 → 4.9.3
-      · CURRENT_PROJECT_VERSION 12 → 13
+      · MARKETING_VERSION 4.9.3 → 4.9.4
+      · CURRENT_PROJECT_VERSION 13 → 14
+
+REPSApp.swift 本轮**未改动**（任务书第三节要求核查，层级与数值都已确认无需改）。
 
 
 四、参数含义
 ----------------------------------------------------------------------
 
+beginDismiss()     拖动第一帧调用；仅当 forceDark == true 时无动画置 false
+isDragging         普通属性（非 @Published），标记「手指是否按下并拖动中」
+setDragging(_:)    唯一写入点：onChanged 首帧置 true，onEnded 置 false
+cancelDismiss()    弹回时调用；延迟 0.36s，复查 isOpen && pull == 0 && !isDragging
+0.36s              弹回 spring 是 response 0.34，取 0.36 保证动画已结束
+close()
+  0.05s            先切浅色后等一帧（约 3 帧 @60Hz）再启动下滑动画
+  spring 0.40 / 0.92   关闭动画，未改
+open()
+  0.52s            打开 spring 是 response 0.46，取 0.52 保证已盖满屏
+  spring 0.46 / 0.90   打开动画，未改
 dismissDrag
-  minimumDistance: 8   起拖阈值，小于 8pt 视为点按（保证 ⌄ / ⋯ 按钮可点），未改
-  coordinateSpace       .global（本轮改动）：全局坐标，不随卡片 offset 变化
-  h = max(0, dy)        只允许往下拉；往上推 h 恒为 0
-  pull = min(1, h/260)  260pt 视为「拉到底」，下层缩放 / 压暗 / 圆角按这个比例插值
-  far 判定              dy > 110 或 predicted > 260 就关闭
-  弹回                  spring(response 0.34, dampingFraction 0.86)
+  minimumDistance 8  起拖阈值，保证 ⌄ / ⋯ 按钮可点
+  coordinateSpace    .global（4.9.3 起）
+  h = max(0, dy)     只允许往下拉
+  pull = min(1, h/260)   260pt 视为拉到底，控制下层 scale / 压暗 / 圆角
+  far 判定           dy > 110 或 predicted > 260
+  弹回               spring 0.34 / 0.86
 
-close() / open()
-  0.30s   关闭时延迟切回浅色的时刻（关闭 spring response 0.40，此时已滑出大半）
-  0.52s   打开后切深色的时刻（打开 spring response 0.46，此时已盖满）
-  两处回调分别复查 !isOpen / isOpen，保证 0.5s 内快速开关不会把状态切错
-  Transaction.disablesAnimations = true：配色切换不走动画，
-  避免 0.4s 渐变叠在手势上看更花
-
-DimOverlay
-  0.42 * (1 - pull)     压暗强度：完全打开 0.42，拉到底 0
-  spring(0.46, 0.90)    与根视图那条完全一致
-
-未改动的数值（保持原样）：34 / 20 / 0.94 / 0.06 / 0.42 / 260 / 110 / 0.5 / 0.13 /
-                            340 / 0.82 / 24 / 462（播放页 fixed）
+配色与下层（本轮未改，仅核查）：
+  forceDark = false  → preferredColorScheme 传 nil，跟随系统
+  底层 AppBackground() → Color(white: 0.13)（opacity 随 isOpen）→ TabView
+  压暗 0.42 * (1 - pull)
 
 
 五、怎么测试
 ----------------------------------------------------------------------
 
-① 慢速下拉到一半**不松手**，停住 3 秒
-   预期：卡片稳稳停在那儿，不再来回抖；封面、歌名、进度条、音量条与卡片整体一起位移，
-         没有封面比卡片慢半拍的感觉。
-   ★ 这一条是本轮核心，务必看。
+① 浅色系统模式：缓慢下拉到一半**不松手**，停住 3 秒
+   预期：底下露出来的那半屏页面**始终是浅色**，从第一 pt 到停住那一刻都不变色；
+         同时卡片不抖（.global 未回退）。
 
-② 缓慢下拉一小段（不到一半）再松手
-   预期：平滑弹回原位，全程颜色不变（不出现「先变浅又变深」）。
+② 松手弹回 → 再下拉到底关闭
+   预期：弹回全程浅色不变；关闭时播放页往下滑出，底下自始至终是浅色页面，
+         不会出现「滑到一半底下突然由深变亮」。
 
-③ 下拉到底关闭
-   预期：播放页往下滑出，滑到快没影时底下才由深转浅，全程没有一下明显的跳色。
+③ 点左上角 ⌄ 按钮关闭
+   预期：与 ② 一致，全程浅色，无跳变。
 
-④ 点左上角 ⌄ 按钮关闭
-   预期：与 ③ 完全一致（走的是同一个 close()）。
+④ 深色系统模式把 ①~③ 各做一遍
+   预期：一样无跳变。forceDark = false 时状态栏跟随系统（深色），不存在浅/深打架。
 
-⑤ 浅色系统模式 / 深色系统模式各把 ①~④ 做一遍
-   预期：两种模式表现一致，深色模式下尤其注意有没有整屏闪白。
+⑤ 打开后 0.5s 内立刻关闭，连做 5 次
+   预期：状态栏文字颜色始终与当前页面匹配，不会卡在某一色，也不会出现整屏闪白。
 
-⑥ 打开播放页后 0.5 秒内立刻关闭，连做 5 次
-   预期：状态栏文字颜色始终与当前页面匹配，不会出现「浅色页面上白字」或
-         「深色播放页上黑字」；不会卡在某一色。
-
-⑦ 顺带回归（本轮未改逻辑，但改了呈现生命周期，值得看一眼）：
-   播放页里拖动进度条 / 音量条是否仍然跟手；播放列表拖动排序是否正常。
+⑥ 顺带回归：播放页里拖进度条 / 音量条是否跟手；播放列表拖动排序是否正常。
 
 
 六、已知限制
 ----------------------------------------------------------------------
 
-1. **未在真机验证。** 本机是 Windows，没有 Mac，也没有 iPhone。CI 只验证了：编译通过、
-   包结构正确、版本号 4.9.3 / 13、二进制里含预期符号。抖动是否真的消失、配色切换是否真的
-   看不见，**必须由你在手机上确认上面 ① ② ③ 三步**（⑥ 也建议做一遍）。
+1. **未在真机验证。** 本机 Windows，无 Mac、无 iPhone。CI 只验证了编译通过、包结构、
+   版本号 4.9.4 / 14、二进制含预期符号。颜色跳变是否真的消失**必须由你在手机上确认
+   ①②③ 三步**。
 
-2. 拖动期间窗口一直是深色，所以下拉时露出的底层 TabView 是**深色版**。这是本轮刻意的取舍：
-   换来的是全程零跳色。若希望下拉时底层是浅色版，就必须回到「拖动中切配色」，
-   而那条路 4.9.2 已经证明会闪 —— 两者不能兼得。
+2. **状态栏会瞬间闪一下（预期行为，不是 bug）。**
+   下拉最初那几 pt —— 也就是切配色的那一帧 —— 状态栏文字会由白变黑，短暂压在深色播放页上。
+   这是「把切色提前到几乎看不见位移的那一帧」的必然代价。要彻底消除它，只能改成给状态栏单独
+   指定颜色（改 navigationBar / statusBar 的外观策略），那条路风险更大，本版不走。
 
-3. DimOverlay 的抽取只是把遮罩这一段从根视图里拿出来。RootTabView 的 body 仍然读 pull
-   （scaleEffect 和 CardClip 半径必须作用在 TabView 上，按要求留在原处），
-   所以拖动时根视图**依旧每帧求值**。真正止抖的是第 1 条（坐标空间），不是第 4 条。
-   彻底方案是把整个「卡片堆叠层」抽成只观察 pull 的子视图，本轮未做。
+3. **本版有一处偏离任务书**：open() 的 0.52s 回调里，除了 `isOpen` 还多了 `!isDragging`。
+   原因：若用户在打开后约 0.3s 就开始下拉（播放页还在滑入、forceDark 仍为 false），
+   0.52s 回调会把窗口切成深色 —— 又是在拖动中途翻色，等于没修好。
+   加上守卫后这种情况保持浅色，由 cancelDismiss 的 0.36s 回调兜底恢复深色。
+   除这一个条件外，open() 与任务书完全一致。
 
-4. 拖动到一半时，播放页上下两条安全区会被 CardClip 的 mask 裁掉（仅拖动过程中，
-   松手恢复）。这是 mask 方案的固有行为，本轮未改。
+4. RootTabView 的 body 仍然读 pull（scaleEffect / CardClip 半径必须作用在 TabView 上），
+   所以拖动时根视图依旧每帧求值。这是性能层面的遗留，不影响本版要修的颜色跳变。
 
-5. 整首播放依赖歌曲已在 Apple Music「资料库」中；系统音量仍只有 16 级（iOS 限制）。
+5. 拖动到一半时，播放页上下两条安全区会被 CardClip 的 mask 裁掉（仅拖动过程，松手恢复）。
 
-6. GlassBar 的 DragGesture(minimumDistance: 0) 仍用 .local —— 已核查：它读的是
-   v.location.x，所在视图不会被位移（拖动播放页时是整张卡片一起位移，局部 x 不变，
-   且进度条自身的拖动不会移动卡片），保持不动。Components.swift 里 RepeatButton 的
-   DragGesture 不使用 translation，同样不受影响。
+6. 整首播放依赖歌曲已在 Apple Music「资料库」中；系统音量仍只有 16 级（iOS 限制）。
+
+7. GlassBar 的 DragGesture(minimumDistance: 0) 仍用 .local —— 已核查：它读的是 v.location.x，
+   所在视图不会被位移（拖动播放页时整张卡片一起位移，局部 x 不变；进度条自身拖动不会移动卡片），
+   保持不动。Components.swift 里 RepeatButton 的 DragGesture 不使用 translation，同样不受影响。

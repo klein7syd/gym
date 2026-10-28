@@ -1,3 +1,333 @@
+===== ios/REPS/PlayerChrome.swift | Target：REPS | 状态：修改 =====
+import SwiftUI
+import UIKit
+
+// MARK: - 安全区
+//
+// 播放页要铺满整屏（含状态栏 / 底部横条区域），所以它自己忽略安全区，
+// 再按真实安全区把内容往里让 —— 否则 `.clipShape` 会按安全区内的 frame 裁剪，
+// 上下各留一条黑边（4.7 的「重大 Bug」就是这么来的）。
+
+enum SafeArea {
+    /// 取不到窗口时的回退值：按灵动岛机型（top 59 / bottom 34）。
+    /// 绝不能用 0 —— 0 会让播放页内容顶到状态栏和底部横条下面。
+    private static let fallback = UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0)
+
+    static var insets: UIEdgeInsets {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        // 优先前台活跃的场景，没有再退回任意一个
+        let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
+        let win = scene?.windows.first(where: { $0.isKeyWindow }) ?? scene?.windows.first
+        // 首帧可能还没布局：top == 0 视为「拿不到」，回退到灵动岛基准值
+        guard let insets = win?.safeAreaInsets, insets.top > 0 else { return fallback }
+        return insets
+    }
+}
+
+// MARK: - 播放页的呈现方式
+//
+// 以前用 fullScreenCover：那一层是完全独立的窗口层，往下拖时下面什么都没有，
+// 露出来就是大片黑色。改成在根视图里叠一张自己管理的卡片：
+// 打开时底下的 TabView 稍微缩小并压暗，播放页从底部推上来，
+// 往下拖的时候底下的菜单一直看得见 —— 就是 iOS 那种「回到上一级」的观感。
+
+final class PlayerPresenter: ObservableObject {
+    static let shared = PlayerPresenter()
+    @Published var isOpen = false
+    /// 下拉进度：0 = 完全打开，1 = 已经拉到底（松手就关）。
+    /// 下层菜单靠它跟着渐进放大 / 变亮 / 变圆角，而不是等关闭动画才动一下。
+    @Published var pull: CGFloat = 0
+    /// 播放页开着时把整个 App 切到深色（状态栏文字才会转白）。
+    /// 不能随手写 `.preferredColorScheme(.dark)`：那会在播放页还在滑入、菜单露在外面的
+    /// 那 0.4 秒里把整个窗口换成深色，看起来就是一整块颜色闪一下。
+    /// 所以改成「完全盖住之后再切、开始下滑之前就切回来」——两次切换都发生在被遮住的时候。
+    @Published var forceDark = false
+
+    private init() {}
+
+    func open() {
+        guard !isOpen else { return }
+        pull = 0
+        withAnimation(.spring(response: 0.46, dampingFraction: 0.90)) {
+            isOpen = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.52) { [weak self] in
+            // 0.52s 内用户已经把它关掉了：不要再把窗口切成深色，
+            // 否则下一次打开会在「已经盖满」之前就变成深色，露出来那一下就是闪。
+            // 也不要在「用户已经在下拉」的时候切：beginDismiss 刚把窗口切成浅色，
+            // 这里再切回深色，等于在拖动中途翻色 —— 正是要修的那道跳变。
+            // （这种极端情况由 cancelDismiss 的延迟回调兜底：松手弹回后 0.36s 会补回深色。）
+            guard let self = self, self.isOpen, !self.isDragging else { return }
+            self.forceDark = true
+        }
+    }
+
+    // MARK: 配色切换的三个时机
+
+    /// 往下拖的**第一帧**：位移还只有 8pt 左右，底下几乎还没露出来，
+    /// 在这一帧把窗口切回浅色谁也看不见。
+    ///
+    /// 为什么必须这么早（4.9.4 的结论）：下拉期间底下露出的是哪一版 TabView，
+    /// 完全取决于 forceDark。如果拖动全程保持深色（4.9.3 的做法），露出来的就是深色版页面，
+    /// 等松手后再切浅 —— 那一整页当场由深变亮，就是用户看到的「深色/亮色跳变」。
+    /// 所以要在一开始就把配色定成最终的样子。
+    ///
+    /// 用关掉动画的 Transaction：preferredColorScheme 的变化一旦被动画带，
+    /// 会变成一段 0.4s 的渐变，叠在手势上更花。
+    func beginDismiss() {
+        guard forceDark else { return }
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { forceDark = false }
+    }
+
+    /// 是否正在拖动。普通属性、不是 @Published —— 它只给 cancelDismiss 的延迟回调做守卫，
+    /// 不需要触发任何视图刷新。
+    private(set) var isDragging = false
+
+    func setDragging(_ v: Bool) {
+        isDragging = v
+    }
+
+    /// 没拖够、弹回原位：等弹回动画（response 0.34）走完再把窗口切回深色。
+    /// 回调里要复查三件事：
+    ///   · isOpen —— 这 0.36s 内可能已经被关掉；
+    ///   · pull == 0 —— 确实已经回位；
+    ///   · !isDragging —— 用户可能又开始拖了，那配色归 beginDismiss 管，不能被这里拉回深色。
+    func cancelDismiss() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) { [weak self] in
+            guard let self = self, self.isOpen, self.pull == 0, !self.isDragging else { return }
+            self.forceDark = true
+        }
+    }
+
+    func close() {
+        guard isOpen else { return }
+        pull = 0
+        // 先把窗口切回浅色。此刻播放页还盖满全屏，切了看不见。
+        // 然后让配色先单独渲染一帧（0.05s），再启动下滑动画 ——
+        // 这样播放页滑出的整个过程里，底下露出来的都是已经切好的浅色页面。
+        if forceDark {
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { forceDark = false }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.startDismissAnimation()
+            }
+        } else {
+            // 拖动开始时已经切过浅色了，不用再等
+            startDismissAnimation()
+        }
+    }
+
+    private func startDismissAnimation() {
+        withAnimation(.spring(response: 0.40, dampingFraction: 0.92)) {
+            isOpen = false
+        }
+    }
+}
+
+// MARK: - 训练面板
+//
+// 从播放页的训练卡点进来。内容就是训练页那套（同一个 Store / RestTimer），
+// 只是排得更紧凑，边听歌边记组不用跳回训练页。
+
+struct TrainingSheet: View {
+    @ObservedObject var store = Store.shared
+    @ObservedObject var rest = RestTimer.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var detent: PresentationDetent = .large
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    exerciseCard
+
+                    if rest.isRunning { restCard }
+
+                    HStack(spacing: 12) {
+                        StepperField(label: "重量", unit: "kg",
+                                     value: formatWeight(store.lastWeight),
+                                     onMinus: { store.setWeight(store.lastWeight - 2.5) },
+                                     onPlus: { store.setWeight(store.lastWeight + 2.5) })
+                        StepperField(label: "次数", unit: "reps",
+                                     value: "\(store.lastReps)",
+                                     onMinus: { store.setReps(store.lastReps - 1) },
+                                     onPlus: { store.setReps(store.lastReps + 1) })
+                    }
+
+                    Button {
+                        completeSet()
+                    } label: {
+                        Text("完成一组")
+                    }
+                    .buttonStyle(GlassButtonStyle(prominent: true))
+
+                    setListCard
+
+                    if store.current != nil {
+                        Button(role: .destructive) {
+                            rest.skip()
+                            store.finishSession()
+                            dismiss()
+                        } label: {
+                            Text("结束本次训练")
+                                .font(.system(size: 14, weight: .medium))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.red)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 26)
+            }
+            .background { AppBackground() }
+            .scrollDismissesKeyboard(.immediately)
+            .navigationTitle("训练")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("完成") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+            .onAppear { store.ensureSession() }
+        }
+        .presentationDetents([.medium, .large], selection: $detent)
+        .presentationDragIndicator(.visible)
+    }
+
+    // MARK: 当前动作
+
+    private var exerciseCard: some View {
+        let ex = store.currentExercise
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("当前动作")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(.secondary)
+            Text(ex.name)
+                .font(.system(size: 20, weight: .bold))
+                .lineSpacing(2)
+                .lineLimit(1)
+            HStack(spacing: 6) {
+                Text("已做 \(ex.sets.count) 组")
+                    .font(.system(size: 12))
+                    .lineSpacing(2)
+                    .foregroundColor(.secondary)
+                if let s = ex.sets.last {
+                    Text("· 上一组 \(formatWeight(s.w)) kg × \(s.r)")
+                        .font(.system(size: 12))
+                        .lineSpacing(2)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .glass(cornerRadius: 20, shadow: false)
+    }
+
+    // MARK: 休息
+
+    private var restCard: some View {
+        HStack(spacing: 14) {
+            MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 58)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("组间休息")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("结束后会自动提示")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+            Spacer(minLength: 4)
+            Button {
+                rest.add(seconds: 30)
+            } label: {
+                Text("+30")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 48, height: 32)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+            }
+            .buttonStyle(ScaleButtonStyle())
+            Button {
+                rest.skip()
+            } label: {
+                Text("跳过")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .frame(width: 44, height: 32)
+            }
+            .buttonStyle(ScaleButtonStyle())
+        }
+        .padding(16)
+        .glass(cornerRadius: 20, shadow: false)
+    }
+
+    // MARK: 组列表
+
+    private var setListCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("本次记录")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            let sets = store.currentExercise.sets
+            if sets.isEmpty {
+                Text("还没有记录，调好重量和次数点「完成一组」")
+                    .font(.system(size: 12))
+                    .lineSpacing(3)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 6)
+            } else {
+                ForEach(Array(sets.enumerated()), id: \.element.id) { i, s in
+                    HStack(spacing: 10) {
+                        Text("\(i + 1)")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundColor(.secondary)
+                            .frame(width: 18, alignment: .trailing)
+                        Text("\(formatWeight(s.w)) kg")
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                        Text("× \(s.r)")
+                            .font(.system(size: 13, design: .rounded))
+                            .foregroundColor(.secondary)
+                        Spacer(minLength: 4)
+                        Button {
+                            store.deleteSet(s.id)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                                .font(.system(size: 15))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .glass(cornerRadius: 20, shadow: false)
+    }
+
+    private func completeSet() {
+        _ = store.ensureSession()
+        store.logSet(weight: store.lastWeight, reps: store.lastReps)
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        rest.start(seconds: store.restSeconds)
+    }
+
+    private func formatWeight(_ w: Double) -> String {
+        w.truncatingRemainder(dividingBy: 1) == 0
+            ? String(format: "%.0f", w)
+            : String(format: "%.1f", w)
+    }
+}
+
 ===== ios/REPS/MusicView.swift | Target：REPS | 状态：修改 =====
 import SwiftUI
 import MediaPlayer
@@ -860,6 +1190,8 @@ struct NowPlayingView: View {
     @ObservedObject var player = PlayerPresenter.shared
 
     @State private var dragOffset: CGFloat = 0
+    /// 这一轮下拉有没有已经切过窗口配色（只在第一次 onChanged 里做一次）
+    @State private var dismissing = false
     @State private var showQueue = false
     @State private var showTraining = false
     /// 拖动进度条时的临时秒数（nil = 没在拖，跟随播放器）
@@ -1057,26 +1389,37 @@ struct NowPlayingView: View {
     /// 卡片弹回去 → 下一帧 translation 又变大 …… 形成一个正反馈回路，表现为持续抖动，
     /// 而且 `player.pull` 也跟着来回跳，底下 TabView 的缩放 / 压暗 / 圆角同步抖。
     /// `.global` 不随卡片位移变化，拿到的才是手指的真实位移，dragOffset 单调跟随。
+    /// （4.9.4 又验证了一次：抖动是坐标空间的问题，和窗口配色切换是两件事，不要混在一起。）
     private var dismissDrag: some Gesture {
         DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { v in
                 let h = max(0, v.translation.height)
+                // 拖动第一帧：位移只有几 pt、底下几乎还没露出来，就在这一帧把窗口切回浅色。
+                // 这样整个下拉过程中露出来的页面，从头到尾都是最终那一版浅色，不会跳变。
+                if h > 0 && !dismissing {
+                    dismissing = true
+                    player.setDragging(true)
+                    player.beginDismiss()
+                }
                 dragOffset = h
                 // 0…1：拉到 260pt 就算到底，下层同步动
                 player.pull = min(1, h / 260)
-                // 拖动期间不动窗口配色（4.9.2 在这里切过，会触发全窗口重绘，也是闪烁来源）。
-                // 现在 forceDark 一直保持 true，直到 close() 里播放页快滑出去时才切。
             }
             .onEnded { v in
+                dismissing = false
+                player.setDragging(false)
                 let far = v.translation.height > 110 || v.predictedEndTranslation.height > 260
                 if far {
+                    // 配色在 beginDismiss 里已经切好，这里直接走 close() 的下滑分支
                     player.close()
                 } else {
-                    // 弹回：纯位置回弹，配色全程不变（forceDark 一直是 true），不会有闪
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
                         dragOffset = 0
                         player.pull = 0
                     }
+                    // 弹回原位后再把窗口切回深色（0.36s 后，弹回动画 0.34s）；
+                    // 若这期间用户又开始拖，回调里有 isDragging 守卫，不会被拉回深色。
+                    player.cancelDismiss()
                 }
             }
     }
@@ -1607,436 +1950,6 @@ struct AlbumArt: View {
     }
 }
 
-===== ios/REPS/PlayerChrome.swift | Target：REPS | 状态：修改 =====
-import SwiftUI
-import UIKit
-
-// MARK: - 安全区
-//
-// 播放页要铺满整屏（含状态栏 / 底部横条区域），所以它自己忽略安全区，
-// 再按真实安全区把内容往里让 —— 否则 `.clipShape` 会按安全区内的 frame 裁剪，
-// 上下各留一条黑边（4.7 的「重大 Bug」就是这么来的）。
-
-enum SafeArea {
-    /// 取不到窗口时的回退值：按灵动岛机型（top 59 / bottom 34）。
-    /// 绝不能用 0 —— 0 会让播放页内容顶到状态栏和底部横条下面。
-    private static let fallback = UIEdgeInsets(top: 59, left: 0, bottom: 34, right: 0)
-
-    static var insets: UIEdgeInsets {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        // 优先前台活跃的场景，没有再退回任意一个
-        let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first
-        let win = scene?.windows.first(where: { $0.isKeyWindow }) ?? scene?.windows.first
-        // 首帧可能还没布局：top == 0 视为「拿不到」，回退到灵动岛基准值
-        guard let insets = win?.safeAreaInsets, insets.top > 0 else { return fallback }
-        return insets
-    }
-}
-
-// MARK: - 播放页的呈现方式
-//
-// 以前用 fullScreenCover：那一层是完全独立的窗口层，往下拖时下面什么都没有，
-// 露出来就是大片黑色。改成在根视图里叠一张自己管理的卡片：
-// 打开时底下的 TabView 稍微缩小并压暗，播放页从底部推上来，
-// 往下拖的时候底下的菜单一直看得见 —— 就是 iOS 那种「回到上一级」的观感。
-
-final class PlayerPresenter: ObservableObject {
-    static let shared = PlayerPresenter()
-    @Published var isOpen = false
-    /// 下拉进度：0 = 完全打开，1 = 已经拉到底（松手就关）。
-    /// 下层菜单靠它跟着渐进放大 / 变亮 / 变圆角，而不是等关闭动画才动一下。
-    @Published var pull: CGFloat = 0
-    /// 播放页开着时把整个 App 切到深色（状态栏文字才会转白）。
-    /// 不能随手写 `.preferredColorScheme(.dark)`：那会在播放页还在滑入、菜单露在外面的
-    /// 那 0.4 秒里把整个窗口换成深色，看起来就是一整块颜色闪一下。
-    /// 所以改成「完全盖住之后再切、开始下滑之前就切回来」——两次切换都发生在被遮住的时候。
-    @Published var forceDark = false
-
-    private init() {}
-
-    func open() {
-        guard !isOpen else { return }
-        pull = 0
-        withAnimation(.spring(response: 0.46, dampingFraction: 0.90)) {
-            isOpen = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.52) { [weak self] in
-            // 0.52s 内用户已经把它关掉了：不要再把窗口切成深色，
-            // 否则下一次打开会在「已经盖满」之前就变成深色，露出来那一下就是闪。
-            guard let self = self, self.isOpen else { return }
-            self.forceDark = true
-        }
-    }
-
-    // 4.9.2 曾在这里放过 `beginDismiss()` / `cancelDismiss()`：拖动第一帧就把窗口切回浅色，
-    // 弹回时再延迟切回深色。4.9.3 删掉了这两个方法 —— 拖动途中改整个窗口的 userInterfaceStyle
-    // 会触发全窗口重绘，叠加拖动每帧刷新，本身就是一处肉眼可见的闪烁。
-    // 现在拖动全程保持 forceDark = true（底下露出的 TabView 是深色版，但播放页和压暗层
-    // 本来就是深色，视觉上是连续的），只在下面 close() 里、播放页快滑出去时才切回浅色。
-
-    func close() {
-        guard isOpen else { return }
-        pull = 0
-        // 先把播放页往下滑；等它基本滑出屏幕、底层 TabView 也快回到 scale 1 之后，
-        // 再切回浅色 —— 那时切几乎看不见。
-        // 顺序是「先动画，0.30s 后再切色」，和 4.9.2 的「先切色，0.05s 后再动画」正好相反：
-        // 4.9.2 那套在拖动关闭时颜色切换发生在卡片刚被拉下、底下露出很多的时刻，会跳一下。
-        startDismissAnimation()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [weak self] in
-            guard let self = self else { return }
-            // 复查状态：这 0.30s 内用户可能又点开了（isOpen 又变 true），
-            // 那就不能再把窗口切成浅色，否则状态栏会在深色播放页上变成黑字。
-            guard !self.isOpen else { return }
-            guard self.forceDark else { return }
-            var t = Transaction()
-            t.disablesAnimations = true
-            withTransaction(t) { self.forceDark = false }
-        }
-    }
-
-    private func startDismissAnimation() {
-        withAnimation(.spring(response: 0.40, dampingFraction: 0.92)) {
-            isOpen = false
-        }
-    }
-}
-
-// MARK: - 训练面板
-//
-// 从播放页的训练卡点进来。内容就是训练页那套（同一个 Store / RestTimer），
-// 只是排得更紧凑，边听歌边记组不用跳回训练页。
-
-struct TrainingSheet: View {
-    @ObservedObject var store = Store.shared
-    @ObservedObject var rest = RestTimer.shared
-    @Environment(\.dismiss) private var dismiss
-    @State private var detent: PresentationDetent = .large
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    exerciseCard
-
-                    if rest.isRunning { restCard }
-
-                    HStack(spacing: 12) {
-                        StepperField(label: "重量", unit: "kg",
-                                     value: formatWeight(store.lastWeight),
-                                     onMinus: { store.setWeight(store.lastWeight - 2.5) },
-                                     onPlus: { store.setWeight(store.lastWeight + 2.5) })
-                        StepperField(label: "次数", unit: "reps",
-                                     value: "\(store.lastReps)",
-                                     onMinus: { store.setReps(store.lastReps - 1) },
-                                     onPlus: { store.setReps(store.lastReps + 1) })
-                    }
-
-                    Button {
-                        completeSet()
-                    } label: {
-                        Text("完成一组")
-                    }
-                    .buttonStyle(GlassButtonStyle(prominent: true))
-
-                    setListCard
-
-                    if store.current != nil {
-                        Button(role: .destructive) {
-                            rest.skip()
-                            store.finishSession()
-                            dismiss()
-                        } label: {
-                            Text("结束本次训练")
-                                .font(.system(size: 14, weight: .medium))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundColor(.red)
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 26)
-            }
-            .background { AppBackground() }
-            .scrollDismissesKeyboard(.immediately)
-            .navigationTitle("训练")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("完成") { dismiss() }
-                        .fontWeight(.semibold)
-                }
-            }
-            .onAppear { store.ensureSession() }
-        }
-        .presentationDetents([.medium, .large], selection: $detent)
-        .presentationDragIndicator(.visible)
-    }
-
-    // MARK: 当前动作
-
-    private var exerciseCard: some View {
-        let ex = store.currentExercise
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("当前动作")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.secondary)
-            Text(ex.name)
-                .font(.system(size: 20, weight: .bold))
-                .lineSpacing(2)
-                .lineLimit(1)
-            HStack(spacing: 6) {
-                Text("已做 \(ex.sets.count) 组")
-                    .font(.system(size: 12))
-                    .lineSpacing(2)
-                    .foregroundColor(.secondary)
-                if let s = ex.sets.last {
-                    Text("· 上一组 \(formatWeight(s.w)) kg × \(s.r)")
-                        .font(.system(size: 12))
-                        .lineSpacing(2)
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .glass(cornerRadius: 20, shadow: false)
-    }
-
-    // MARK: 休息
-
-    private var restCard: some View {
-        HStack(spacing: 14) {
-            MiniRestRing(progress: rest.progress, text: rest.remainingText, size: 58)
-            VStack(alignment: .leading, spacing: 5) {
-                Text("组间休息")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("结束后会自动提示")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-            Spacer(minLength: 4)
-            Button {
-                rest.add(seconds: 30)
-            } label: {
-                Text("+30")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 48, height: 32)
-                    .background(Capsule().fill(Color.primary.opacity(0.08)))
-            }
-            .buttonStyle(ScaleButtonStyle())
-            Button {
-                rest.skip()
-            } label: {
-                Text("跳过")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.secondary)
-                    .frame(width: 44, height: 32)
-            }
-            .buttonStyle(ScaleButtonStyle())
-        }
-        .padding(16)
-        .glass(cornerRadius: 20, shadow: false)
-    }
-
-    // MARK: 组列表
-
-    private var setListCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("本次记录")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(.secondary)
-
-            let sets = store.currentExercise.sets
-            if sets.isEmpty {
-                Text("还没有记录，调好重量和次数点「完成一组」")
-                    .font(.system(size: 12))
-                    .lineSpacing(3)
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 6)
-            } else {
-                ForEach(Array(sets.enumerated()), id: \.element.id) { i, s in
-                    HStack(spacing: 10) {
-                        Text("\(i + 1)")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundColor(.secondary)
-                            .frame(width: 18, alignment: .trailing)
-                        Text("\(formatWeight(s.w)) kg")
-                            .font(.system(size: 14, weight: .medium, design: .rounded))
-                        Text("× \(s.r)")
-                            .font(.system(size: 13, design: .rounded))
-                            .foregroundColor(.secondary)
-                        Spacer(minLength: 4)
-                        Button {
-                            store.deleteSet(s.id)
-                        } label: {
-                            Image(systemName: "minus.circle")
-                                .font(.system(size: 15))
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.vertical, 6)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .glass(cornerRadius: 20, shadow: false)
-    }
-
-    private func completeSet() {
-        _ = store.ensureSession()
-        store.logSet(weight: store.lastWeight, reps: store.lastReps)
-        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        rest.start(seconds: store.restSeconds)
-    }
-
-    private func formatWeight(_ w: Double) -> String {
-        w.truncatingRemainder(dividingBy: 1) == 0
-            ? String(format: "%.0f", w)
-            : String(format: "%.1f", w)
-    }
-}
-
-===== ios/REPS/REPSApp.swift | Target：REPS | 状态：修改 =====
-import SwiftUI
-import UserNotifications
-
-@main
-struct REPSApp: App {
-    init() {
-        RestTimer.shared.requestNotificationAuthIfNeeded()
-    }
-
-    var body: some Scene {
-        WindowGroup {
-            RootTabView()
-                .onAppear { Store.shared.writeNow() }
-        }
-    }
-}
-
-/// 底部栏用系统原生的 TabView（UIKit 的 UITabBar）：
-/// 点按回弹、长按、滚动到底部再点当前页回顶、无障碍朗读、
-/// 安全区处理和玻璃材质全部交给系统，新版 iOS 上自动是新外观。
-struct RootTabView: View {
-    @Environment(\.scenePhase) private var scenePhase
-    @ObservedObject var player = PlayerPresenter.shared
-    @State private var selection = 0
-
-    var body: some View {
-        ZStack {
-            // 底层：常态用「页面同色」，不是黑色。
-            // TabView 和它里面的页面都是按安全区布局的（系统在根视图里已经替它们让开了
-            // 状态栏与底部横条）。只要这一层是黑的，任何一处没被内容盖住的安全区就会露出黑边，
-            // 所以这里铺的必须是跟页面一样的底色 —— 露出来也看不出来。
-            AppBackground()
-
-            // 播放页打开时这一层换成播放页自己的底色（深灰 #212121），当卡片堆叠的底。
-            // 用播放页同色而不是纯黑：万一播放页边缘有一点没铺到，露出来的也是同一个颜色。
-            // 淡入用 0.25s easeInOut：和 TabView 那 0.46s 的 spring 大致同步，
-            // 避免 forceDark 已经切了深色、这一层还是浅灰的那一帧硬闪。
-            Color(white: 0.13)
-                .opacity(player.isOpen ? 1 : 0)
-                .animation(.easeInOut(duration: 0.25), value: player.isOpen)
-                .allowsHitTesting(false)
-
-            TabView(selection: $selection) {
-                TrainView()
-                    .tabItem {
-                        Label("训练", systemImage: "figure.strengthtraining.traditional")
-                    }
-                    .tag(0)
-
-                MusicView()
-                    .tabItem {
-                        Label("音乐", systemImage: "music.note")
-                    }
-                    .tag(1)
-
-                GrowthView()
-                    .tabItem {
-                        Label("成长", systemImage: "chart.xyaxis.line")
-                    }
-                    .tag(2)
-
-                ProfileView()
-                    .tabItem {
-                        Label("我的", systemImage: "person.crop.circle")
-                    }
-                    .tag(3)
-            }
-            .tint(.accentColor)
-            // ★ 4.9 修「一进 App 上下两条大黑边」的真正原因：
-            // 以前这里无条件套着 `.clipShape(RoundedRectangle(...))`。TabView 是按安全区
-            // 布局的，一旦套上裁剪，即使圆角是 0，也会沿「安全区矩形」硬切一刀 ——
-            // 页面延伸到状态栏 / 底部横条上的那部分（导航栏底、标签栏底）被切掉，
-            // 露出的就是底下那层，于是上下各留一条边。
-            // 现在只在播放页打开（卡片堆叠、需要圆角）时才裁，静止状态完全不裁。
-            .modifier(CardClip(active: player.isOpen, radius: 34 - 20 * player.pull))
-            // 跟着下拉进度实时变化：拉得越多，下层越接近原始大小、越亮 —— 就是「渐渐回到上一级」
-            .scaleEffect(player.isOpen ? 0.94 + 0.06 * player.pull : 1, anchor: .center)
-            .overlay {
-                // 压暗遮罩抽成了独立小视图，见文件底部的 DimOverlay：
-                // pull 每帧都在变，遮罩只依赖 pull，没必要让根视图重新构造它。
-                DimOverlay()
-            }
-            .allowsHitTesting(!player.isOpen)
-            .animation(.spring(response: 0.46, dampingFraction: 0.90), value: player.isOpen)
-
-            if player.isOpen {
-                NowPlayingView()
-                    .zIndex(10)
-                    // 移出时只位移、不淡出：淡出会让播放页在半透明的那几帧里
-                    // 透出底下那层（深浅色交接处就会闪一下）。滑出时点一下就能盖住。
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .bottom).combined(with: .opacity),
-                        removal: .move(edge: .bottom)
-                    ))
-            }
-        }
-        // 状态栏文字转白：只在播放页已经盖满全屏之后才切（切早了会整块闪）
-        .preferredColorScheme(player.forceDark ? ColorScheme.dark : nil)
-        .onChange(of: scenePhase) { phase in
-            if phase == .background {
-                Store.shared.writeNow()
-            }
-        }
-    }
-}
-
-// `CardClip`（只在播放页打开时才给 TabView 裁圆角）定义在 Theme.swift，
-// 播放页 NowPlayingView 用的是同一个修饰符。
-
-// MARK: - 压暗遮罩
-//
-// 单独抽成一个只观察 player 的小视图：`pull` 是 @Published，拖动时每帧都在变，
-// 遮罩只跟 pull 有关（0.42 → 0），没必要每次都让根视图重新构造这一段。
-// 数值完全不改：0.42 * (1 - pull)。
-//
-// 注意它仍然挂在 TabView 的 `.overlay` 上；打开 / 关闭播放页时这层压暗的渐变
-// 用与外层同一条 spring（0.46 / 0.90），所以视觉和抽取之前完全一样。
-private struct DimOverlay: View {
-    @ObservedObject var player = PlayerPresenter.shared
-
-    var body: some View {
-        Color.black
-            .opacity(player.isOpen ? 0.42 * (1 - Double(player.pull)) : 0)
-            // 和外层那圈完全同一条 spring（0.46 / 0.90），只是在这里再写一遍：
-            // 这层现在是通过自己的订阅收到 isOpen 变化的，不保证一定落在
-            // RootTabView 那圈 `.animation(…, value: player.isOpen)` 的事务里，
-            // 少了它就可能变成硬切。参数一模一样，视觉上没有任何差别。
-            // 注意 value 只看 isOpen —— 拖动时 opacity 跟 pull 逐帧变化，不能被动画带。
-            .animation(.spring(response: 0.46, dampingFraction: 0.90), value: player.isOpen)
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
-    }
-}
-
 ===== ios/project.yml | Target：REPS（工程配置） | 状态：修改 =====
 name: REPS
 
@@ -2076,8 +1989,8 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "16.0"
-        MARKETING_VERSION: "4.9.3"
-        CURRENT_PROJECT_VERSION: "13"
+        MARKETING_VERSION: "4.9.4"
+        CURRENT_PROJECT_VERSION: "14"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: ""
