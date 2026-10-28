@@ -3,6 +3,7 @@ import AVFoundation
 import MediaPlayer
 import Combine
 import UIKit
+import SwiftUI   // remove(atOffsets:) 来自 SwiftUI 对集合的扩展
 
 // MARK: - 可播放条目
 

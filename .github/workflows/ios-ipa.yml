@@ -27,11 +27,20 @@ jobs:
         run: |
           set -euo pipefail
           ls -d /Applications/Xcode*.app 2>/dev/null || true
-          LATEST=$(python3 -c 'import glob,re;xs=[(tuple(int(x) for x in re.search(r"Xcode_?([0-9.]+)",p).group(1).split(".")),p) for p in glob.glob("/Applications/Xcode*.app")];xs.sort();print(xs[-1][1] if xs else "")')
+          LATEST=""
+          BEST="0"
+          for p in /Applications/Xcode_*.app; do
+            [ -d "$p" ] || continue
+            v=$(basename "$p" | sed -e 's/^Xcode_//' -e 's/\.app$//')
+            top=$(printf '%s\n%s\n' "$BEST" "$v" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+            if [ "$top" = "$v" ]; then
+              BEST="$v"
+              LATEST="$p"
+            fi
+          done
+          if [ -z "$LATEST" ]; then LATEST="/Applications/Xcode.app"; fi
           echo "选中: $LATEST"
-          if [ -n "$LATEST" ]; then
-            sudo xcode-select -s "$LATEST/Contents/Developer"
-          fi
+          sudo xcode-select -s "$LATEST/Contents/Developer"
           xcodebuild -version
           echo "iOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
 
