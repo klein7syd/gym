@@ -58,44 +58,29 @@ final class PlayerPresenter: ObservableObject {
         }
     }
 
-    /// 往下拖的**第一帧**：这时位移只有 8pt 左右，底下几乎还没露出来，
-    /// 在这里把窗口切回浅色谁也看不见；再晚一点（比如松手时才切），
-    /// 底下已经露出的那整页会当场由深变浅 —— 那就是「下拉时闪一下」的来源。
-    /// 用关掉动画的 Transaction：preferredColorScheme 的变化一旦被动画带，
-    /// 会变成一段 0.4s 的渐变，和手势叠在一起看更花。
-    func beginDismiss() {
-        guard forceDark else { return }
-        var t = Transaction()
-        t.disablesAnimations = true
-        withTransaction(t) { forceDark = false }
-    }
-
-    /// 没拖够、弹回原位：等弹回动画（response 0.34）走完再把窗口切回深色。
-    /// 回调里必须复查状态 —— 这 0.36s 内用户可能又把它关掉了，或者又开始拖了。
-    func cancelDismiss() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.36) { [weak self] in
-            guard let self = self, self.isOpen, self.pull == 0 else { return }
-            self.forceDark = true
-        }
-    }
+    // 4.9.2 曾在这里放过 `beginDismiss()` / `cancelDismiss()`：拖动第一帧就把窗口切回浅色，
+    // 弹回时再延迟切回深色。4.9.3 删掉了这两个方法 —— 拖动途中改整个窗口的 userInterfaceStyle
+    // 会触发全窗口重绘，叠加拖动每帧刷新，本身就是一处肉眼可见的闪烁。
+    // 现在拖动全程保持 forceDark = true（底下露出的 TabView 是深色版，但播放页和压暗层
+    // 本来就是深色，视觉上是连续的），只在下面 close() 里、播放页快滑出去时才切回浅色。
 
     func close() {
         guard isOpen else { return }
         pull = 0
-        // 先把窗口切回浅色。此刻播放页还盖满全屏，切了看不见；
-        // 用 disablesAnimations 的 Transaction，理由同 beginDismiss。
-        let needFlip = forceDark
-        if needFlip {
+        // 先把播放页往下滑；等它基本滑出屏幕、底层 TabView 也快回到 scale 1 之后，
+        // 再切回浅色 —— 那时切几乎看不见。
+        // 顺序是「先动画，0.30s 后再切色」，和 4.9.2 的「先切色，0.05s 后再动画」正好相反：
+        // 4.9.2 那套在拖动关闭时颜色切换发生在卡片刚被拉下、底下露出很多的时刻，会跳一下。
+        startDismissAnimation()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [weak self] in
+            guard let self = self else { return }
+            // 复查状态：这 0.30s 内用户可能又点开了（isOpen 又变 true），
+            // 那就不能再把窗口切成浅色，否则状态栏会在深色播放页上变成黑字。
+            guard !self.isOpen else { return }
+            guard self.forceDark else { return }
             var t = Transaction()
             t.disablesAnimations = true
-            withTransaction(t) { forceDark = false }
-            // 让配色切换先单独渲染一帧（这一帧播放页仍盖满屏），0.05s 后再下滑
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.startDismissAnimation()
-            }
-        } else {
-            // 拖动开始时已经切过浅色了，不用再等
-            startDismissAnimation()
+            withTransaction(t) { self.forceDark = false }
         }
     }
 

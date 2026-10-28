@@ -859,8 +859,6 @@ struct NowPlayingView: View {
     @ObservedObject var player = PlayerPresenter.shared
 
     @State private var dragOffset: CGFloat = 0
-    /// 这一轮下拉有没有已经通知过「开始关闭」（只在第一次 onChanged 里发一次）
-    @State private var dismissing = false
     @State private var showQueue = false
     @State private var showTraining = false
     /// 拖动进度条时的临时秒数（nil = 没在拖，跟随播放器）
@@ -1050,33 +1048,34 @@ struct NowPlayingView: View {
 
     /// 往下拖收回：底下的菜单一直可见（并被一起带着放大 / 变亮），所以不会出现黑边；
     /// 拖过阈值就关，没拖够就弹回原位。
+    ///
+    /// ★ 坐标空间必须是 `.global`，这是 4.9.3 修「下拉时持续抖动 / 闪烁」的关键：
+    /// 这个手势挂在抓手 / 头部 / 封面 / 标题区上，而这几个视图都在**被 `.offset(y: dragOffset)`
+    /// 移动的卡片内部**。用默认的 `.local`（视图自身坐标）时，手指往下一动 → 视图跟着往下移 →
+    /// 手指在这个局部坐标里的 y 被抵消 → `translation.height` 变小 → `dragOffset` 变小 →
+    /// 卡片弹回去 → 下一帧 translation 又变大 …… 形成一个正反馈回路，表现为持续抖动，
+    /// 而且 `player.pull` 也跟着来回跳，底下 TabView 的缩放 / 压暗 / 圆角同步抖。
+    /// `.global` 不随卡片位移变化，拿到的才是手指的真实位移，dragOffset 单调跟随。
     private var dismissDrag: some Gesture {
-        DragGesture(minimumDistance: 8)
+        DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { v in
                 let h = max(0, v.translation.height)
                 dragOffset = h
                 // 0…1：拉到 260pt 就算到底，下层同步动
                 player.pull = min(1, h / 260)
-                // 刚拖起来（位移还只有 8pt 左右、底下几乎没露出）就把窗口切回浅色。
-                // 这一步不能等到松手：拖到一半时底下那整页已经露出来了，
-                // 那时再从深变浅，就是肉眼看到的「下拉闪一下」。
-                if h > 0 && !dismissing {
-                    dismissing = true
-                    player.beginDismiss()
-                }
+                // 拖动期间不动窗口配色（4.9.2 在这里切过，会触发全窗口重绘，也是闪烁来源）。
+                // 现在 forceDark 一直保持 true，直到 close() 里播放页快滑出去时才切。
             }
             .onEnded { v in
-                dismissing = false
                 let far = v.translation.height > 110 || v.predictedEndTranslation.height > 260
                 if far {
                     player.close()
                 } else {
+                    // 弹回：纯位置回弹，配色全程不变（forceDark 一直是 true），不会有闪
                     withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
                         dragOffset = 0
                         player.pull = 0
                     }
-                    // 弹回原位后再把窗口切回深色（0.36s 后，弹回动画 0.34s）
-                    player.cancelDismiss()
                 }
             }
     }
@@ -1084,12 +1083,15 @@ struct NowPlayingView: View {
     // MARK: 封面
 
     private func cover(side: CGFloat) -> some View {
+        // 封面尺寸直接跟 side 走，**不加任何隐式动画**。
+        // 以前这里挂过 .animation(.easeOut(duration: 0.25), value: side)：side 在拖动
+        // （安全区回退 / 布局重算）时会变，这个动画让封面相对卡片滞后 0.25s，
+        // 拖动过程中就会出现「封面和卡片错位」的撕裂帧。
         TrackArt(title: hub.current?.title ?? "REPS",
                  mediaID: hub.current?.mediaID,
                  size: side,
                  corner: 8)
             .shadow(color: .black.opacity(0.30), radius: 24, y: 16)
-            .animation(.easeOut(duration: 0.25), value: side)
             .gesture(dismissDrag)
     }
 

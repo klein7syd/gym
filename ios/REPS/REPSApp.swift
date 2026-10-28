@@ -76,10 +76,9 @@ struct RootTabView: View {
             // 跟着下拉进度实时变化：拉得越多，下层越接近原始大小、越亮 —— 就是「渐渐回到上一级」
             .scaleEffect(player.isOpen ? 0.94 + 0.06 * player.pull : 1, anchor: .center)
             .overlay {
-                Color.black
-                    .opacity(player.isOpen ? 0.42 * (1 - Double(player.pull)) : 0)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
+                // 压暗遮罩抽成了独立小视图，见文件底部的 DimOverlay：
+                // pull 每帧都在变，遮罩只依赖 pull，没必要让根视图重新构造它。
+                DimOverlay()
             }
             .allowsHitTesting(!player.isOpen)
             .animation(.spring(response: 0.46, dampingFraction: 0.90), value: player.isOpen)
@@ -107,3 +106,28 @@ struct RootTabView: View {
 
 // `CardClip`（只在播放页打开时才给 TabView 裁圆角）定义在 Theme.swift，
 // 播放页 NowPlayingView 用的是同一个修饰符。
+
+// MARK: - 压暗遮罩
+//
+// 单独抽成一个只观察 player 的小视图：`pull` 是 @Published，拖动时每帧都在变，
+// 遮罩只跟 pull 有关（0.42 → 0），没必要每次都让根视图重新构造这一段。
+// 数值完全不改：0.42 * (1 - pull)。
+//
+// 注意它仍然挂在 TabView 的 `.overlay` 上；打开 / 关闭播放页时这层压暗的渐变
+// 用与外层同一条 spring（0.46 / 0.90），所以视觉和抽取之前完全一样。
+private struct DimOverlay: View {
+    @ObservedObject var player = PlayerPresenter.shared
+
+    var body: some View {
+        Color.black
+            .opacity(player.isOpen ? 0.42 * (1 - Double(player.pull)) : 0)
+            // 和外层那圈完全同一条 spring（0.46 / 0.90），只是在这里再写一遍：
+            // 这层现在是通过自己的订阅收到 isOpen 变化的，不保证一定落在
+            // RootTabView 那圈 `.animation(…, value: player.isOpen)` 的事务里，
+            // 少了它就可能变成硬切。参数一模一样，视觉上没有任何差别。
+            // 注意 value 只看 isOpen —— 拖动时 opacity 跟 pull 逐帧变化，不能被动画带。
+            .animation(.spring(response: 0.46, dampingFraction: 0.90), value: player.isOpen)
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+    }
+}
