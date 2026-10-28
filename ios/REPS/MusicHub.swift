@@ -27,6 +27,8 @@ struct PlayItem: Identifiable, Equatable {
     let externalURL: URL?      // 去 Apple Music 打开这首歌
     let fullDuration: Double   // 完整曲目时长（只作参考，实际以播放器为准）
     let source: Source
+    /// 资料库曲目的唯一标识。有它就绝对不会放错歌（点哪首放哪首）。
+    var mediaID: MPMediaEntityPersistentID? = nil
 
     var isPreview: Bool { source == .preview }
 
@@ -103,6 +105,8 @@ final class MusicHub: NSObject, ObservableObject {
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var ticker: Timer?
+    /// 拖动进度条刚 seek 完的保护期：这段时间内不采用轮询回来的时间
+    private var seekGuardUntil = Date.distantPast
     private let store = Store.shared
 
     /// 系统播放器队列里的位置 → 我们自己 queue 里的位置。
@@ -332,11 +336,23 @@ final class MusicHub: NSObject, ObservableObject {
     func seek(to seconds: Double) {
         let t = max(0, seconds)
         if engine == .appleMusic {
-            AppleMusicService.shared.player.currentPlaybackTime = t
+            let mp = AppleMusicService.shared.player
+            mp.currentPlaybackTime = t
+            currentTime = t
+            // 系统播放器偶尔落后一拍，0.25 秒后没落到位就再补一次；
+            // 这段时间内轮询回来的旧时间不要盖掉我们刚设的位置，否则进度条会往回跳。
+            seekGuardUntil = Date().addingTimeInterval(0.9)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                guard let self = self, self.engine == .appleMusic else { return }
+                if abs(mp.currentPlaybackTime - t) > 0.8 {
+                    mp.currentPlaybackTime = t
+                    self.seekGuardUntil = Date().addingTimeInterval(0.6)
+                }
+            }
         } else {
             player?.seek(to: CMTime(seconds: t, preferredTimescale: 600))
+            currentTime = t
         }
-        currentTime = t
         updateNowPlaying()
     }
 
@@ -379,7 +395,14 @@ final class MusicHub: NSObject, ObservableObject {
 
         var pool: [(local: Int, media: MPMediaItem)] = []
         for (idx, it) in queue.enumerated() where it.source == .appleMusic {
-            if let m = svc.match(title: it.title, artist: it.artist) {
+            // 有 persistentID 就直接取那一首，保证和界面上点的是同一首歌
+            let m: MPMediaItem?
+            if let mid = it.mediaID {
+                m = svc.item(for: mid)
+            } else {
+                m = svc.match(title: it.title, artist: it.artist)
+            }
+            if let m = m {
                 pool.append((idx, m))
             }
         }
@@ -452,7 +475,7 @@ final class MusicHub: NSObject, ObservableObject {
         player = p
 
         timeObserver = p.addPeriodicTimeObserver(
-            forInterval: CMTime(seconds: 0.4, preferredTimescale: 600),
+            forInterval: CMTime(seconds: 0.1, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
             guard let self = self else { return }
@@ -501,11 +524,13 @@ final class MusicHub: NSObject, ObservableObject {
     // MARK: - 外部引擎轮询
     //
     // MPMusicPlayerController 没有 SwiftUI 能订阅的进度属性，
-    // 用 0.4 秒轮询把时间、时长、播放状态、队列位置同步回来。
+    // 用 0.1 秒轮询把时间、时长、播放状态、队列位置同步回来。
+    // 刚 seek 完的那 0.9 秒里不信轮询回来的旧时间，避免把手一松进度条往回跳。
 
     private func startTicker() {
         stopTicker()
-        let t = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
+        // 0.1 秒一次：进度条是 1pt 1pt 走的，不再是 0.4 秒一跳的台阶感
+        let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             self?.tickExternal()
         }
         RunLoop.main.add(t, forMode: .common)
@@ -522,7 +547,7 @@ final class MusicHub: NSObject, ObservableObject {
         let mp = AppleMusicService.shared.player
 
         let cur = mp.currentPlaybackTime
-        if cur.isFinite, cur >= 0 { currentTime = cur }
+        if cur.isFinite, cur >= 0, Date() >= seekGuardUntil { currentTime = cur }
         if let d = mp.nowPlayingItem?.playbackDuration, d > 0 { duration = d }
 
         let playing = (mp.playbackState == .playing)
@@ -531,7 +556,16 @@ final class MusicHub: NSObject, ObservableObject {
         let p = mp.indexOfNowPlayingItem
         if let map = indexMap, map.indices.contains(p) {
             let mapped = map[p]
-            if mapped != index { index = mapped }
+            if mapped != index {
+                // 系统自己切到下一首了：同步下标、封面、时长，界面才不会停在上一首
+                index = mapped
+                if let it = mp.nowPlayingItem {
+                    captureArtwork(it)
+                    let d = it.playbackDuration
+                    if d > 0 { duration = d }
+                }
+                currentTime = 0
+            }
         }
     }
 

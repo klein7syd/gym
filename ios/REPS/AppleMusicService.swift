@@ -16,8 +16,9 @@ import Combine
 // 它只需要 NSAppleMusicUsageDescription + 用户授权，不需要任何 entitlement，
 // 自签安装同样有效。
 //
-// 所以这里的做法是：iTunes Search 负责「搜」，MediaPlayer 负责「放完整版」。
-// 搜到的曲目按「歌名 + 艺人」在资料库里匹配，匹配上就是完整版，匹配不上才退回试听。
+// 所以这里的做法是：搜索只搜「自己的资料库」，播放交给 MediaPlayer。
+// 这样搜到的每一首都一定能整首放（会员身份直接生效），也不存在「搜出一堆不搭边的歌」，
+// 更不会出现「点 A 放成 B」——曲目用 persistentID 精确寻址，不再靠歌名猜。
 
 final class AppleMusicService: ObservableObject {
     static let shared = AppleMusicService()
@@ -35,6 +36,10 @@ final class AppleMusicService: ObservableObject {
     private var indexBuilt = false
     private var byKey: [String: MPMediaItem] = [:]
     private var byTitle: [String: [MPMediaItem]] = [:]
+    /// 资料库全量，和 searchKeys 同序，供本地搜索用
+    private var items: [MPMediaItem] = []
+    private var searchKeys: [(title: String, artist: String, album: String)] = []
+    private var byID: [MPMediaEntityPersistentID: MPMediaItem] = [:]
     private let work = DispatchQueue(label: "reps.applemusic.index", qos: .userInitiated)
 
     /// 系统播放器。applicationMusicPlayer 是 App 内播放，不接管「音乐」App 的播放状态。
@@ -44,6 +49,16 @@ final class AppleMusicService: ObservableObject {
 
     private init() {
         refreshStatus()
+
+        // 资料库变动（在别的设备加了歌、Apple Music 里点了 +）时重建索引
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name(rawValue: "MPMediaLibraryDidChangeNotification"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.buildIndexIfNeeded(force: true)
+        }
+        MPMediaLibrary.default().beginGeneratingLibraryChangeNotifications()
     }
 
     // MARK: - 授权
@@ -96,12 +111,15 @@ final class AppleMusicService: ObservableObject {
         isIndexing = true
         work.async { [weak self] in
             guard let self = self else { return }
-            let items = MPMediaQuery.songs().items ?? []
+            let songs = MPMediaQuery.songs().items ?? []
             var exact: [String: MPMediaItem] = [:]
             var titles: [String: [MPMediaItem]] = [:]
-            exact.reserveCapacity(items.count)
+            var ids: [MPMediaEntityPersistentID: MPMediaItem] = [:]
+            var keys: [(title: String, artist: String, album: String)] = []
+            exact.reserveCapacity(songs.count)
+            keys.reserveCapacity(songs.count)
 
-            for it in items {
+            for it in songs {
                 let rawTitle = it.title ?? ""
                 guard !rawTitle.isEmpty else { continue }
                 let t = Self.normalize(rawTitle)
@@ -109,12 +127,17 @@ final class AppleMusicService: ObservableObject {
                 let a = Self.normalize(it.artist ?? "")
                 exact["\(t)|\(a)"] = it
                 titles[t, default: []].append(it)
+                ids[it.persistentID] = it
+                keys.append((t, a, Self.normalize(it.albumTitle ?? "")))
             }
 
-            let total = items.count
+            let total = songs.count
             DispatchQueue.main.async {
                 self.byKey = exact
                 self.byTitle = titles
+                self.byID = ids
+                self.items = songs
+                self.searchKeys = keys
                 self.librarySongCount = total
                 self.isIndexing = false
                 self.indexBuilt = true
@@ -122,7 +145,39 @@ final class AppleMusicService: ObservableObject {
         }
     }
 
-    /// 在资料库里找这首歌。找不到返回 nil（那就只能试听）。
+    /// 按 persistentID 精确取曲目：这就是「点哪首放哪首」的保证，
+    /// 不再靠歌名+艺人去猜，避免放成同名翻唱或别的版本。
+    func item(for id: MPMediaEntityPersistentID) -> MPMediaItem? {
+        byID[id]
+    }
+
+    /// 资料库内搜索。全部在本地索引里做，不联网，也不会搜出资料库外的歌。
+    /// 排序：歌名前缀 → 歌名包含 → 艺人包含 → 专辑包含。
+    func search(_ raw: String, limit: Int = 40) -> [MPMediaItem] {
+        guard access == .granted, indexBuilt else { return [] }
+        let q = Self.normalize(raw)
+        guard !q.isEmpty else { return [] }
+
+        var hits: [(rank: Int, order: Int, item: MPMediaItem)] = []
+        for (i, k) in searchKeys.enumerated() {
+            var rank = -1
+            if k.title.hasPrefix(q) {
+                rank = 0
+            } else if k.title.contains(q) {
+                rank = 1
+            } else if k.artist.contains(q) {
+                rank = 2
+            } else if k.album.contains(q) {
+                rank = 3
+            }
+            guard rank >= 0 else { continue }
+            hits.append((rank, i, items[i]))
+        }
+        hits.sort { $0.rank != $1.rank ? $0.rank < $1.rank : $0.order < $1.order }
+        return hits.prefix(limit).map { $0.item }
+    }
+
+    /// 按「歌名 + 艺人」在资料库里兜底匹配（只在 PlayItem 没带 persistentID 时用）。
     func match(title: String, artist: String) -> MPMediaItem? {
         guard access == .granted, indexBuilt else { return nil }
         let t = Self.normalize(title)

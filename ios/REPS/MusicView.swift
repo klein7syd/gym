@@ -15,14 +15,11 @@ struct MusicView: View {
     @ObservedObject var am = AppleMusicService.shared
 
     @State private var query = ""
-    @State private var results: [ITunesTrack] = []
-    @State private var isSearching = false
-    @State private var message: String?
+    /// 资料库搜索结果（全部可直接完整播放，不再有 30 秒试听）
+    @State private var libraryHits: [MPMediaItem] = []
+    @State private var didSearch = false
     @State private var showPicker = false
     @State private var showPlayer = false
-    @State private var searchTask: Task<Void, Never>?
-    /// 搜到的曲目里，能在 Apple Music 资料库匹配到（= 可听完整版）的 id
-    @State private var fullIDs: Set<String> = []
 
     /// 音乐页的两个界面：Apple Music 曲库 / 本地音乐
     enum SourceTab: String, CaseIterable, Identifiable {
@@ -61,27 +58,15 @@ struct MusicView: View {
             .scrollDismissesKeyboard(.interactively)
             .searchable(text: $query,
                         placement: .navigationBarDrawer(displayMode: .always),
-                        prompt: Text(tab == .apple ? "搜索 Apple Music" : "搜索本地音乐"))
-            .onSubmit(of: .search) {
-                if tab == .apple { runSearch() }
-            }
-            .onChange(of: query) { newValue in
-                if newValue.trimmingCharacters(in: .whitespaces).isEmpty {
-                    results = []
-                    message = nil
-                    isSearching = false
-                    fullIDs = []
-                }
+                        prompt: Text(tab == .apple ? "搜索我的资料库" : "搜索本地音乐"))
+            .onChange(of: query) { _ in
+                runLibrarySearch()
             }
             .onChange(of: am.librarySongCount) { _ in
-                refreshFullFlags()
+                runLibrarySearch()
             }
             .onChange(of: tab) { _ in
-                message = nil
-                if tab == .local {
-                    results = []
-                    fullIDs = []
-                }
+                if tab == .apple { runLibrarySearch() }
             }
             .navigationTitle("音乐")
             .toolbar {
@@ -135,11 +120,12 @@ struct MusicView: View {
             nowPlayingCard
         }
 
+        appleMusicCard
+
         if query.trimmingCharacters(in: .whitespaces).isEmpty {
-            appleMusicCard
             searchHint
         } else {
-            searchSection
+            libraryResults
         }
     }
 
@@ -161,9 +147,9 @@ struct MusicView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 24, weight: .light))
                 .foregroundColor(.secondary)
-            Text("搜 Apple Music 曲库")
+            Text("搜我的资料库")
                 .font(.system(size: 15, weight: .semibold))
-            Text("输入歌名、歌手或专辑。资料库里的歌整首播放，其余给 30 秒官方试听。")
+            Text("只搜你 Apple Music 资料库里的歌，搜到的都能整首完整播放。想加歌就去 Apple Music 里点「+」。")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
@@ -182,7 +168,7 @@ struct MusicView: View {
                 Image(systemName: "music.note.tv")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(.accentColor)
-                Text("Apple Music 完整播放")
+                Text("Apple Music 资料库")
                     .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 if am.isGranted {
@@ -198,7 +184,7 @@ struct MusicView: View {
 
             Text(am.isGranted
                  ? am.statusHint
-                 : "开启后，你 Apple Music 资料库里的歌可以在这儿整首播放，不再是 30 秒试听。")
+                 : "开启后直接读你 Apple Music 资料库，会员能听的歌在这里整首放，不会有 30 秒限制。")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -211,7 +197,7 @@ struct MusicView: View {
                         }
                     } else {
                         am.requestAccess({ ok in
-                            if ok { refreshFullFlags() }
+                            if ok { runLibrarySearch() }
                         })
                     }
                 } label: {
@@ -238,202 +224,125 @@ struct MusicView: View {
     }
 
 
-    // MARK: - 搜索
+    // MARK: - 资料库搜索
+    //
+    // 只搜自己的 Apple Music 资料库：不联网、不搜曲库以外的任何东西。
+    // 搜出来的一律能整首完整播放（会员身份直接生效），
+    // 也就不会再有「搜到一堆不搭边的歌」「有会员却只给 30 秒」。
 
-    private func runSearch() {
+    private func runLibrarySearch() {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return }
-        searchTask?.cancel()
-        isSearching = true
-        message = nil
-        results = []
-        searchTask = Task {
-            do {
-                let list = try await ITunesAPI.search(q)
-                if Task.isCancelled { return }
-                await MainActor.run {
-                    results = list
-                    isSearching = false
-                    refreshFullFlags()
-                    if list.isEmpty { message = "没搜到「\(q)」，换个关键词试试。" }
-                }
-            } catch {
-                if Task.isCancelled { return }
-                await MainActor.run {
-                    isSearching = false
-                    message = "网络不通，搜不到曲库。检查一下网络再试。"
-                }
-            }
+        guard tab == .apple, am.isGranted, !q.isEmpty else {
+            libraryHits = []
+            didSearch = false
+            return
         }
+        didSearch = true
+        libraryHits = am.search(q)
     }
 
-    private var searchSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if isSearching {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("正在搜 Apple Music")
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.vertical, 30)
-                .frame(maxWidth: .infinity)
-            }
-
-            if let msg = message {
-                Text(msg)
-                    .font(.system(size: 13))
+    @ViewBuilder
+    private var libraryResults: some View {
+        if am.isIndexing {
+            HStack(spacing: 8) {
+                ProgressView().scaleEffect(0.7)
+                Text("正在读取资料库…")
+                    .font(.system(size: 12))
                     .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.vertical, 16)
+        } else if libraryHits.isEmpty {
+            if didSearch {
+                Text("资料库里没有「\(query)」")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
                     .padding(.vertical, 20)
-                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        } else {
+            HStack(spacing: 6) {
+                Text("我的资料库 · \(libraryHits.count) 首")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.secondary)
+                Text("全部可完整播放")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.green)
+                Spacer()
             }
 
-            if !results.isEmpty {
-                HStack(spacing: 6) {
-                    Text("Apple Music 曲库 · \(results.count) 首")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.secondary)
-                    if !fullIDs.isEmpty {
-                        Text("其中 \(fullIDs.count) 首可听完整版")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(.green)
-                    }
-                    Spacer()
-                }
-
-                VStack(spacing: 0) {
-                    ForEach(Array(results.enumerated()), id: \.element.id) { i, t in
-                        trackRow(t, index: i)
-                        if i != results.count - 1 {
-                            Divider().padding(.leading, 66)
-                        }
+            LazyVStack(spacing: 0) {
+                ForEach(Array(libraryHits.enumerated()), id: \.element.persistentID) { i, m in
+                    libraryRow(m, index: i)
+                    if i != libraryHits.count - 1 {
+                        Divider().padding(.leading, 66)
                     }
                 }
-                .padding(.vertical, 4)
-                .glass()
             }
+            .padding(.vertical, 4)
+            .glass()
         }
     }
 
-    private func trackRow(_ t: ITunesTrack, index: Int) -> some View {
-        Button {
-            playTrack(t)
+    private func libraryRow(_ m: MPMediaItem, index: Int) -> some View {
+        let playing = hub.current?.mediaID == m.persistentID
+        return Button {
+            playLibrary(at: index)
         } label: {
             HStack(spacing: 12) {
-                artwork(url: t.artworkSmall, size: 50, seed: t.title)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(t.title)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(.primary)
+                MediaArtwork(item: m, size: 50)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(m.title ?? "未知曲目")
+                        .font(.system(size: 15, weight: playing ? .semibold : .regular))
+                        .foregroundColor(playing ? .accentColor : .primary)
                         .lineLimit(1)
-                    HStack(spacing: 6) {
-                        Text(t.artist)
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                        sourceBadge(t)
-                    }
+                    Text(librarySubtitle(m))
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
                 }
                 Spacer(minLength: 4)
-                Text(MusicHub.formatTime(t.duration))
-                    .font(.system(size: 11, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundColor(.secondary)
+                if playing && hub.isPlaying {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 13))
+                        .foregroundColor(.accentColor)
+                } else {
+                    Text(MusicHub.formatTime(m.playbackDuration))
+                        .font(.system(size: 11))
+                        .monospacedDigit()
+                        .foregroundColor(.secondary)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .contextMenu {
-            if let u = t.storeURL {
-                Button {
-                    UIApplication.shared.open(u)
-                } label: {
-                    Label(fullIDs.contains(t.id) ? "在 Apple Music 打开" : "去 Apple Music 加入资料库",
-                          systemImage: "arrow.up.forward.app")
-                }
-            }
-            Button {
-                NeteaseService.search("\(t.title) \(t.artist)")
-            } label: {
-                Label("去网易云搜这首歌", systemImage: "waveform")
-            }
-        }
     }
 
-    /// 三种状态一眼看清：能放完整版 / 只能试听 / 啥都放不了。
-    @ViewBuilder
-    private func sourceBadge(_ t: ITunesTrack) -> some View {
-        if fullIDs.contains(t.id) {
-            Text("完整")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(.green)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1.5)
-                .background(Capsule().fill(Color.green.opacity(0.15)))
-        } else if t.hasPreview {
-            Text("试听")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(.secondary)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1.5)
-                .background(Capsule().fill(Color.primary.opacity(0.07)))
-        } else {
-            Text("不可播")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(.orange)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1.5)
-                .background(Capsule().fill(Color.orange.opacity(0.14)))
-        }
+    private func librarySubtitle(_ m: MPMediaItem) -> String {
+        let artist = m.artist ?? ""
+        let album = m.albumTitle ?? ""
+        if artist.isEmpty { return album }
+        return album.isEmpty ? artist : "\(artist) · \(album)"
     }
 
-    private func playTrack(_ t: ITunesTrack) {
-        // 优先组「完整版」队列：这一批里所有能在资料库匹配上的歌一起排队，
-        // 这样上一首/下一首切过去的也是完整版，不会突然掉回试听。
-        let fullItems = results.compactMap { makeItem($0, preferFull: true) }
-            .filter { $0.source == .appleMusic }
-        if let pos = fullItems.firstIndex(where: { $0.id == t.id }) {
-            hub.play(items: fullItems, startingAt: pos)
-            showPlayer = true
-            return
+    /// 点哪首放哪首：队列就是当前看到的这串结果，每首带着 persistentID，不会串歌。
+    private func playLibrary(at index: Int) {
+        let items: [PlayItem] = libraryHits.map { m in
+            PlayItem(id: String(m.persistentID),
+                     title: m.title ?? "未知曲目",
+                     artist: m.artist ?? "",
+                     artworkURL: nil,
+                     fileURL: nil,
+                     externalURL: m.assetURL,
+                     fullDuration: m.playbackDuration,
+                     source: .appleMusic,
+                     mediaID: m.persistentID)
         }
-
-        let playable = results.compactMap { makeItem($0, preferFull: false) }
-        if let pos = playable.firstIndex(where: { $0.id == t.id }) {
-            hub.play(items: playable, startingAt: pos)
-            showPlayer = true
-            return
-        }
-
-        message = "「\(t.title)」没有试听片段。在 Apple Music 里把它加入资料库，再回来就能听完整版。"
-    }
-
-    private func makeItem(_ r: ITunesTrack, preferFull: Bool) -> PlayItem? {
-        let full = preferFull && fullIDs.contains(r.id)
-        guard full || r.preview != nil else { return nil }
-        return PlayItem(id: r.id,
-                        title: r.title,
-                        artist: r.artist,
-                        artworkURL: r.artworkLarge,
-                        fileURL: r.preview,
-                        externalURL: r.storeURL,
-                        fullDuration: r.duration,
-                        source: full ? .appleMusic : .preview)
-    }
-
-    /// 搜完（或资料库索引就绪）后，把「能完整播」的结果算一次，避免每行都跑正则匹配。
-    private func refreshFullFlags() {
-        guard am.isGranted else {
-            fullIDs = []
-            return
-        }
-        var s = Set<String>()
-        for r in results where am.isPlayableInFull(title: r.title, artist: r.artist) {
-            s.insert(r.id)
-        }
-        fullIDs = s
+        guard items.indices.contains(index) else { return }
+        hub.play(items: items, startingAt: index)
+        showPlayer = true
     }
 
     // MARK: - 正在播放卡片
@@ -1275,14 +1184,6 @@ struct SlimBar: View {
                 Capsule()
                     .fill(Color.primary.opacity(0.78))
                     .frame(width: max(0, w * p), height: trackHeight)
-
-                if dragging {
-                    Circle()
-                        .fill(Color.primary)
-                        .frame(width: 12, height: 12)
-                        .offset(x: min(w * p, w - 6) - 6)
-                        .transition(.opacity)
-                }
             }
             .frame(width: w, height: 18)
             .contentShape(Rectangle())
@@ -1395,6 +1296,32 @@ final class SystemVolume {
     }
 }
 
+
+// MARK: - 资料库封面
+
+/// 从 MPMediaItem 里取封面。取图是同步的，所以放到每行出现时再做，滚动不卡。
+struct MediaArtwork: View {
+    let item: MPMediaItem
+    var size: CGFloat
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            AlbumArt(title: item.title ?? "", size: size)
+            if let image = image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: size * 0.08, style: .continuous))
+        .task(id: item.persistentID) {
+            guard image == nil else { return }
+            image = item.artwork?.image(at: CGSize(width: size * 3, height: size * 3))
+        }
+    }
+}
 
 // MARK: - 抽象封面
 
