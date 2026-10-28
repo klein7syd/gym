@@ -462,10 +462,7 @@ struct MetricChartView: View {
                         area.addLine(to: CGPoint(x: mapped[mapped.count - 1].x, y: plot.maxY))
                         area.addLine(to: CGPoint(x: mapped[0].x, y: plot.maxY))
                         area.closeSubpath()
-                        context.fill(area, with: .linearGradient(
-                            Gradient(colors: [key.color.opacity(0.28), key.color.opacity(0.02)]),
-                            startPoint: CGPoint(x: plot.midX, y: plot.minY),
-                            endPoint: CGPoint(x: plot.midX, y: plot.maxY)))
+                        context.fill(area, with: .color(key.color.opacity(0.12)))
                     }
 
                     context.stroke(path,

@@ -26,19 +26,9 @@ struct GlassBackgroundModifier: ViewModifier {
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .fill(.ultraThinMaterial)
 
-                    // 让背后色彩渗进玻璃，形成冷暖过渡
+                    // 纯色薄涂层：不再用渐变，避免页面出现脏色过渡
                     RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(scheme == .dark ? 0.10 : 0.34),
-                                    Color.white.opacity(scheme == .dark ? 0.02 : 0.10),
-                                    Color.black.opacity(scheme == .dark ? 0.10 : 0.03)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                        .fill(Color.white.opacity(scheme == .dark ? 0.06 : 0.22))
 
                     if tint > 0 {
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -47,20 +37,10 @@ struct GlassBackgroundModifier: ViewModifier {
                 }
             }
             .overlay {
-                // 镜面高光：左上亮、右下回光，模拟玻璃边缘折射
+                // 单色细描边：玻璃边缘的实线，不做明暗渐变
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(scheme == .dark ? 0.42 : 0.90),
-                                Color.white.opacity(scheme == .dark ? 0.06 : 0.22),
-                                Color.white.opacity(scheme == .dark ? 0.18 : 0.45)
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
+                    .strokeBorder(Color.white.opacity(scheme == .dark ? 0.14 : 0.55),
+                                  lineWidth: 1)
             }
             .compositingGroup()
             .shadow(color: Color.black.opacity(shadow ? (scheme == .dark ? 0.45 : 0.10) : 0),
@@ -94,34 +74,11 @@ extension View {
 
 // MARK: - 背景
 
-/// 液态玻璃需要有「内容」在背后才通透，所以页面底色是柔和色块而不是纯灰。
+/// 纯色底：不使用任何渐变与彩色光斑，避免整页泛蓝泛紫。
 struct AppBackground: View {
-    @Environment(\.colorScheme) private var scheme
-
     var body: some View {
-        ZStack {
-            Color(UIColor.systemGroupedBackground)
-
-            // 三团柔光，制造色彩渗透
-            Circle()
-                .fill(Color(red: 0.36, green: 0.62, blue: 1.0).opacity(scheme == .dark ? 0.30 : 0.22))
-                .frame(width: 420, height: 420)
-                .blur(radius: 110)
-                .offset(x: -150, y: -300)
-
-            Circle()
-                .fill(Color(red: 0.45, green: 0.95, blue: 0.72).opacity(scheme == .dark ? 0.22 : 0.18))
-                .frame(width: 400, height: 400)
-                .blur(radius: 120)
-                .offset(x: 180, y: -120)
-
-            Circle()
-                .fill(Color(red: 0.72, green: 0.52, blue: 1.0).opacity(scheme == .dark ? 0.20 : 0.14))
-                .frame(width: 380, height: 380)
-                .blur(radius: 130)
-                .offset(x: -60, y: 380)
-        }
-        .ignoresSafeArea()
+        Color(UIColor.systemGroupedBackground)
+            .ignoresSafeArea()
     }
 }
 
@@ -150,13 +107,12 @@ struct GlassButtonStyle: ButtonStyle {
             .background {
                 if prominent {
                     RoundedRectangle(cornerRadius: GlassRadius.control, style: .continuous)
-                        .fill(LinearGradient(colors: [tint.opacity(0.95), tint.opacity(0.75)],
-                                             startPoint: .top, endPoint: .bottom))
+                        .fill(tint)
                         .overlay(
                             RoundedRectangle(cornerRadius: GlassRadius.control, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.35), lineWidth: 0.8)
+                                .strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8)
                         )
-                        .shadow(color: tint.opacity(0.35), radius: 12, y: 6)
+                        .shadow(color: tint.opacity(0.28), radius: 10, y: 5)
                 } else {
                     RoundedRectangle(cornerRadius: GlassRadius.control, style: .continuous)
                         .fill(.ultraThinMaterial)

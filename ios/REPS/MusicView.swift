@@ -1,5 +1,6 @@
 import SwiftUI
 import MediaPlayer
+import AVFoundation
 import UniformTypeIdentifiers
 
 // MARK: - 音乐
@@ -654,10 +655,9 @@ struct MiniPlayerBar: View {
 
 // MARK: - 全屏播放页
 //
-// 布局比上一版整体上移、收紧：封面从 300pt 降到最多 244pt，段间距压到 8-12pt，
-// 中间区域可滚动，保证小屏（SE）也不会把控件挤出屏幕。
-// 从上到下：收起 + 菜单 / 封面 / 歌名 / 进度 / 播放控制（含循环方式、播放列表）
-// / 系统音量条 / 底部固定的训练状态（与训练页共用同一个 RestTimer）。
+// 排版对齐 Apple Music：顶部只有收起 / 更多，封面居中，
+// 歌名 → 进度 → 控制 → 音量 沿中轴往下排，底部常驻训练状态。
+// 进度条和音量条都是自绘细条：平时就是一条线，按住拖动时才浮出把手。
 
 struct NowPlayingView: View {
     @ObservedObject var hub = MusicHub.shared
@@ -666,36 +666,46 @@ struct NowPlayingView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var dragOffset: CGFloat = 0
     @State private var showQueue = false
+    /// 拖动进度条时的临时秒数（nil = 没在拖，跟随播放器）
+    @State private var scrub: Double?
 
     var body: some View {
         GeometryReader { geo in
-            let side = min(geo.size.width - 104, 244)
+            // 除封面以外的固定高度合计，用来算封面能占多大
+            let fixed: CGFloat = 386
+            let side = max(148, min(geo.size.width - 72, geo.size.height - fixed, 336))
 
-            ZStack {
-                AppBackground()
+            VStack(spacing: 0) {
+                header
 
-                VStack(spacing: 0) {
-                    header
+                Spacer(minLength: 6)
 
-                    ScrollView(showsIndicators: false) {
-                        VStack(spacing: 11) {
-                            cover(side: side)
-                            titleBlock
-                            progress
-                            controls
-                            volume
-                        }
-                        .padding(.top, 6)
-                        .padding(.bottom, 4)
-                    }
+                cover(side: side)
 
-                    trainingBar
-                        .padding(.horizontal, 16)
-                        .padding(.top, 6)
-                }
-                .padding(.bottom, 6)
+                Spacer().frame(height: 20)
+
+                titleBlock
+
+                Spacer().frame(height: 14)
+
+                progress
+
+                Spacer().frame(height: 10)
+
+                controls
+
+                Spacer().frame(height: 10)
+
+                volume
+
+                Spacer(minLength: 10)
+
+                trainingBar
+                    .padding(.horizontal, 16)
             }
+            .padding(.bottom, 6)
         }
+        .background { AppBackground() }
         .offset(y: max(0, dragOffset))
         .sheet(isPresented: $showQueue) {
             QueueSheet()
@@ -705,31 +715,25 @@ struct NowPlayingView: View {
     // MARK: 顶部
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 0) {
             Button {
                 dismiss()
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(.primary)
-                    .frame(width: 34, height: 34)
-                    .glassInner(cornerRadius: 17)
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            VStack(spacing: 1) {
-                Text(sourceLabel)
-                    .font(.system(size: 9, weight: .bold))
-                    .tracking(0.6)
-                    .foregroundColor(hub.isPlayingFullVersion ? .green : .secondary)
-                Text("正在播放")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.secondary)
-            }
+            Text("正在播放")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(.secondary)
 
-            Spacer()
+            Spacer(minLength: 0)
 
             Menu {
                 Button {
@@ -758,14 +762,14 @@ struct NowPlayingView: View {
                 }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(.primary)
-                    .frame(width: 34, height: 34)
-                    .glassInner(cornerRadius: 17)
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 4)
+        .padding(.horizontal, 12)
+        .padding(.top, 2)
         .contentShape(Rectangle())
         .gesture(
             DragGesture()
@@ -782,12 +786,6 @@ struct NowPlayingView: View {
                     }
                 }
         )
-    }
-
-    private var sourceLabel: String {
-        if hub.isPlayingFullVersion { return "APPLE MUSIC 完整版" }
-        if let c = hub.current { return c.subtitle }
-        return "REPS"
     }
 
     // MARK: 封面
@@ -811,30 +809,39 @@ struct NowPlayingView: View {
             }
         }
         .frame(width: side, height: side)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.8)
-        )
-        .shadow(color: .black.opacity(0.22), radius: 22, y: 12)
-        .scaleEffect(hub.isPlaying ? 1 : 0.95)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.18), radius: 18, y: 10)
+        .scaleEffect(hub.isPlaying ? 1 : 0.94)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hub.isPlaying)
     }
 
     // MARK: 歌名
 
     private var titleBlock: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 3) {
             Text(hub.current?.title ?? "没有正在播放的音乐")
-                .font(.system(size: 18, weight: .bold))
+                .font(.system(size: 20, weight: .bold))
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.6)
             Text(subtitleText)
-                .font(.system(size: 12))
+                .font(.system(size: 14))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
+
+            if hub.isPlayingFullVersion {
+                HStack(spacing: 3) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 8))
+                    Text("APPLE MUSIC 完整版")
+                        .font(.system(size: 8, weight: .bold))
+                        .tracking(0.4)
+                }
+                .foregroundColor(.green)
+                .padding(.top, 1)
+            }
         }
-        .padding(.horizontal, 26)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 28)
     }
 
     private var subtitleText: String {
@@ -845,23 +852,35 @@ struct NowPlayingView: View {
     // MARK: 进度
 
     private var progress: some View {
-        VStack(spacing: 0) {
-            Slider(value: Binding(get: { hub.currentTime },
-                                  set: { hub.seek(to: $0) }),
-                   in: 0...max(1, hub.duration))
-                .tint(.primary)
-            HStack {
-                Text(MusicHub.formatTime(hub.currentTime))
-                Spacer()
-                Text(MusicHub.formatTime(hub.duration))
+        VStack(spacing: 5) {
+            SlimBar(progress: progressRatio,
+                    onScrub: { v in scrub = v * max(1, hub.duration) },
+                    onCommit: { v in
+                        hub.seek(to: v * max(1, hub.duration))
+                        scrub = nil
+                    },
+                    trackHeight: 4)
+
+            HStack(spacing: 0) {
+                Text(MusicHub.formatTime(elapsed))
+                Spacer(minLength: 8)
+                Text("-" + MusicHub.formatTime(max(0, hub.duration - elapsed)))
             }
-            .font(.system(size: 10, weight: .medium))
+            .font(.system(size: 11, weight: .medium))
             .monospacedDigit()
             .foregroundColor(.secondary)
-            .padding(.horizontal, 4)
         }
-        .padding(.horizontal, 24)
-        .padding(.top, -4)
+        .padding(.horizontal, 26)
+    }
+
+    private var progressRatio: Double {
+        let d = max(1, hub.duration)
+        if let s = scrub { return min(max(s / d, 0), 1) }
+        return min(max(hub.currentTime / d, 0), 1)
+    }
+
+    private var elapsed: Double {
+        scrub ?? hub.currentTime
     }
 
     // MARK: 播放控制（循环方式 / 上一首 / 播放 / 下一首 / 播放列表）
@@ -874,7 +893,7 @@ struct NowPlayingView: View {
                 Image(systemName: hub.repeatMode.symbol)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(hub.repeatMode.isOn ? .accentColor : .secondary)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -885,9 +904,9 @@ struct NowPlayingView: View {
                 hub.previous()
             } label: {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 21))
+                    .font(.system(size: 22))
                     .foregroundColor(.primary)
-                    .frame(width: 50, height: 50)
+                    .frame(width: 52, height: 52)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -897,24 +916,24 @@ struct NowPlayingView: View {
             } label: {
                 ZStack {
                     Circle().fill(.ultraThinMaterial)
-                    Circle().strokeBorder(Color.white.opacity(0.32), lineWidth: 0.8)
+                    Circle().strokeBorder(Color.white.opacity(0.30), lineWidth: 0.8)
                     Image(systemName: hub.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 28))
+                        .font(.system(size: 27))
                         .foregroundColor(.primary)
                 }
-                .frame(width: 62, height: 62)
-                .shadow(color: .black.opacity(0.12), radius: 10, y: 5)
+                .frame(width: 64, height: 64)
+                .shadow(color: .black.opacity(0.10), radius: 8, y: 4)
             }
             .buttonStyle(ScaleButtonStyle(scale: 0.94))
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 8)
 
             Button {
                 hub.next(userInitiated: true)
             } label: {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 21))
+                    .font(.system(size: 22))
                     .foregroundColor(.primary)
-                    .frame(width: 50, height: 50)
+                    .frame(width: 52, height: 52)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -927,29 +946,27 @@ struct NowPlayingView: View {
                 Image(systemName: "list.bullet")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(.secondary)
-                    .frame(width: 44, height: 44)
+                    .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 22)
     }
 
     // MARK: 系统音量
 
     private var volume: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 10) {
             Image(systemName: "speaker.fill")
                 .font(.system(size: 9))
                 .foregroundColor(.secondary)
-            SystemVolumeSlider()
-                .frame(height: 26)
+            VolumeBar()
             Image(systemName: "speaker.wave.3.fill")
                 .font(.system(size: 9))
                 .foregroundColor(.secondary)
         }
         .padding(.horizontal, 30)
-        .padding(.top, 2)
     }
 
     // MARK: 底部训练状态
@@ -1125,30 +1142,150 @@ struct QueueSheet: View {
     }
 }
 
-// MARK: - 系统音量条
+// MARK: - 细条进度/音量控件
 //
-// iOS 不允许直接改 AVAudioSession.outputVolume，唯一合法且有效的方式是
-// 把系统的 MPVolumeView 塞进界面。它控制的是设备真实音量，跟侧边键完全同步。
+// 和 Apple Music 一样：静态时只有一条 4pt 的线，按住拖动时把手才浮出来。
+// 命中区域仍是 18pt 高，手指不用瞄得很准。
 
-struct SystemVolumeSlider: UIViewRepresentable {
-    func makeUIView(context: Context) -> MPVolumeView {
-        let v = MPVolumeView()
-        v.showsRouteButton = false
-        v.backgroundColor = .clear
-        v.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        return v
-    }
+struct SlimBar: View {
+    var progress: Double
+    var onScrub: (Double) -> Void = { _ in }
+    var onCommit: (Double) -> Void = { _ in }
+    var trackHeight: CGFloat = 4
+    var enabled: Bool = true
 
-    func updateUIView(_ uiView: MPVolumeView, context: Context) {
-        // MPVolumeView 内部的 UISlider 是懒创建的，等一拍再上色
-        DispatchQueue.main.async {
-            for sub in uiView.subviews {
-                if let s = sub as? UISlider {
-                    s.minimumTrackTintColor = UIColor.label
-                    s.maximumTrackTintColor = UIColor.tertiaryLabel.withAlphaComponent(0.35)
-                    s.thumbTintColor = UIColor.label
+    @State private var dragging = false
+    @State private var local: Double = 0
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = max(1, geo.size.width)
+            let p = CGFloat(min(max(dragging ? local : progress, 0), 1))
+
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.primary.opacity(0.14))
+                    .frame(height: trackHeight)
+
+                Capsule()
+                    .fill(Color.primary.opacity(0.78))
+                    .frame(width: max(0, w * p), height: trackHeight)
+
+                if dragging {
+                    Circle()
+                        .fill(Color.primary)
+                        .frame(width: 12, height: 12)
+                        .offset(x: min(w * p, w - 6) - 6)
+                        .transition(.opacity)
                 }
             }
+            .frame(width: w, height: 18)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        guard enabled else { return }
+                        dragging = true
+                        let t = min(max(v.location.x / w, 0), 1)
+                        local = t
+                        onScrub(t)
+                    }
+                    .onEnded { v in
+                        guard enabled else { return }
+                        let t = min(max(v.location.x / w, 0), 1)
+                        local = t
+                        dragging = false
+                        onCommit(t)
+                    }
+            )
+        }
+        .frame(height: 18)
+        .opacity(enabled ? 1 : 0.4)
+    }
+}
+
+// MARK: - 系统音量条
+
+struct VolumeBar: View {
+    @State private var level: Double = SystemVolume.shared.level
+    @State private var dragging = false
+    @State private var local: Double = 0
+
+    private let ticker = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        SlimBar(progress: dragging ? local : level,
+                onScrub: { v in
+                    dragging = true
+                    local = v
+                    SystemVolume.shared.set(v)
+                },
+                onCommit: { v in
+                    local = v
+                    level = v
+                    dragging = false
+                    SystemVolume.shared.set(v)
+                },
+                trackHeight: 4)
+            .onReceive(ticker) { _ in
+                guard !dragging else { return }
+                let v = SystemVolume.shared.level
+                if abs(v - level) > 0.005 { level = v }
+            }
+            .onAppear { level = SystemVolume.shared.level }
+    }
+}
+
+/// 系统音量读写。
+///
+/// iOS 不开放改音量的 API，只能借 MPVolumeView 内部那个 UISlider：
+/// 把它挂到一个看不见的容器里，读它的 value / 给它 setValue，
+/// 就能做到和侧边键完全同步的真实音量控制。
+final class SystemVolume {
+    static let shared = SystemVolume()
+
+    private let host = MPVolumeView(frame: CGRect(x: -4, y: -4, width: 1, height: 1))
+
+    private var slider: UISlider? {
+        host.subviews.compactMap { $0 as? UISlider }.first
+    }
+
+    private init() {
+        host.showsRouteButton = false
+        host.alpha = 0.01
+        host.isUserInteractionEnabled = false
+    }
+
+    /// MPVolumeView 的 UISlider 是懒创建的，先进窗口再取一次。
+    private func install() {
+        if host.superview == nil {
+            guard let scene = UIApplication.shared.connectedScenes
+                    .compactMap({ $0 as? UIWindowScene })
+                    .first(where: { $0.activationState == .foregroundActive })
+                    ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first,
+                  let window = scene.windows.first(where: { $0.isKeyWindow }) ?? scene.windows.first
+            else { return }
+            window.addSubview(host)
+            host.setNeedsLayout()
+            host.layoutIfNeeded()
+        }
+        if slider == nil {
+            host.setNeedsLayout()
+            host.layoutIfNeeded()
+        }
+    }
+
+    var level: Double {
+        install()
+        if let s = slider { return Double(s.value) }
+        return Double(AVAudioSession.sharedInstance().outputVolume)
+    }
+
+    func set(_ v: Double) {
+        install()
+        let target = Float(min(max(v, 0), 1))
+        if let s = slider {
+            s.setValue(target, animated: false)
         }
     }
 }
@@ -1156,39 +1293,31 @@ struct SystemVolumeSlider: UIViewRepresentable {
 
 // MARK: - 抽象封面
 
-/// 本地文件没有内嵌封面时，用歌名生成固定渐变封面，避免整页空白。
+/// 本地文件没有内嵌封面时，用歌名挑一个纯色占位（不用渐变）。
 struct AlbumArt: View {
     let title: String
     var size: CGFloat
 
     var body: some View {
-        let colors = Self.palette(for: title)
         ZStack {
             RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
-                .fill(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
-            RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
-                .fill(LinearGradient(colors: [Color.white.opacity(0.26), Color.clear],
-                                     startPoint: .topLeading, endPoint: .center))
+                .fill(Self.baseColor(for: title))
             Image(systemName: "music.note")
                 .font(.system(size: size * 0.2, weight: .light))
                 .foregroundColor(.white.opacity(0.92))
         }
         .frame(width: size, height: size)
-        .overlay(
-            RoundedRectangle(cornerRadius: size * 0.08, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-        )
     }
 
-    static func palette(for title: String) -> [Color] {
-        let palettes: [[Color]] = [
-            [Color(red: 0.30, green: 0.42, blue: 0.98), Color(red: 0.62, green: 0.34, blue: 0.96)],
-            [Color(red: 0.98, green: 0.44, blue: 0.38), Color(red: 0.96, green: 0.68, blue: 0.31)],
-            [Color(red: 0.16, green: 0.78, blue: 0.62), Color(red: 0.14, green: 0.52, blue: 0.88)],
-            [Color(red: 0.86, green: 0.36, blue: 0.62), Color(red: 0.52, green: 0.32, blue: 0.94)],
-            [Color(red: 0.22, green: 0.68, blue: 0.88), Color(red: 0.36, green: 0.40, blue: 0.96)]
+    static func baseColor(for title: String) -> Color {
+        let colors: [Color] = [
+            Color(red: 0.32, green: 0.42, blue: 0.92),
+            Color(red: 0.92, green: 0.44, blue: 0.38),
+            Color(red: 0.16, green: 0.66, blue: 0.56),
+            Color(red: 0.80, green: 0.36, blue: 0.58),
+            Color(red: 0.24, green: 0.60, blue: 0.82)
         ]
         let seed = title.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
-        return palettes[abs(seed) % palettes.count]
+        return colors[abs(seed) % colors.count]
     }
 }
